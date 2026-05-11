@@ -39,6 +39,16 @@ anyhow = "1.0"
 async-trait = "0.1"
 tokio = { version = "1.40", features = ["macros", "rt-multi-thread", "fs", "io-util", "sync", "time"] }
 futures = "0.3"
+# A1.1 — added for studio-router lift from cobrust-llm-router @ 61f2aff (v0.1.1).
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
+blake3 = "1.5"
+hex = "0.4"
+unicode-normalization = "0.1"
+uuid = { version = "1", features = ["v4"] }
+time = { version = "0.3", features = ["formatting", "macros", "serde-well-known"] }
+rand = "0.8"
+tempfile = "3"
+wiremock = "0.6"
 
 [profile.release]
 lto = "thin"
