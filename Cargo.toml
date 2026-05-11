@@ -49,6 +49,11 @@ time = { version = "0.3", features = ["formatting", "macros", "serde-well-known"
 rand = "0.8"
 tempfile = "3"
 wiremock = "0.6"
+# A2 — added for studio-store (ADR-0004 storage + ADR-0006 addendum ledger reader).
+sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "macros", "migrate"] }
+notify = { version = "6", default-features = false, features = ["macos_fsevent"] }
+serde_yaml = "0.9"
+tokio-stream = { version = "0.1", features = ["sync"] }
 
 [profile.release]
 lto = "thin"

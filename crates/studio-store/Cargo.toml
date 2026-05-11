@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+description = "Cobrust Studio persistence layer — ADR/finding markdown CRUD, SQLite materialized views, encrypted session k/v. Per ADR-0004 and ADR-0006 addendum (F-02)."
 
 [lints]
 workspace = true
@@ -13,6 +14,20 @@ workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
 toml.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+futures.workspace = true
+time.workspace = true
+sqlx.workspace = true
+notify.workspace = true
+# Re-exports LedgerEntry/Outcome/ProviderKind per ADR-0006 addendum F-02
+# (studio-store is a reader of the JSONL written by studio-router::Ledger).
+studio-router = { path = "../studio-router" }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "fs", "io-util", "sync"] }
