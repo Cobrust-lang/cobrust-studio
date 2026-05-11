@@ -23,6 +23,10 @@ pub const SLOT_ENDPOINT: &str = "endpoint";
 /// `scheme` is a free-form tag the auth layer interprets (e.g.
 /// `"aes-gcm-256/argon2id"`). studio-store does NOT decrypt; it is a
 /// pass-through to the caller.
+///
+/// Implements `From<Vec<u8>>` for callers that hold raw opaque bytes (no
+/// scheme/nonce split yet — `scheme = "raw"`, `nonce = vec![]`); callers
+/// constructing the AEAD triple use the explicit struct literal instead.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EncryptedBlob {
     /// Encrypted ciphertext bytes.
@@ -33,6 +37,24 @@ pub struct EncryptedBlob {
     pub scheme: String,
 }
 
+impl EncryptedBlob {
+    /// View the ciphertext bytes (the opaque payload).
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.ciphertext
+    }
+}
+
+impl From<Vec<u8>> for EncryptedBlob {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self {
+            ciphertext: bytes,
+            nonce: Vec::new(),
+            scheme: "raw".to_string(),
+        }
+    }
+}
+
 /// Sub-handle returned by [`Store::session`].
 #[derive(Debug)]
 pub struct SessionHandle<'a> {
@@ -40,7 +62,7 @@ pub struct SessionHandle<'a> {
 }
 
 impl<'a> SessionHandle<'a> {
-    pub(crate) fn new(store: &'a Store) -> Self {
+    pub(crate) const fn new(store: &'a Store) -> Self {
         Self { store }
     }
 
