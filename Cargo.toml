@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/studio-server",
+    "crates/studio-store",
+    "crates/studio-router",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.94"
+license = "Apache-2.0 OR MIT"
+authors = ["The Cobrust Studio Project"]
+repository = "https://github.com/cobrust-lang/cobrust-studio"
+homepage = "https://github.com/cobrust-lang/cobrust-studio"
+readme = "README.md"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+todo = "warn"
+dbg_macro = "warn"
+doc_markdown = "allow"
+module_name_repetitions = "allow"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "1.0"
+anyhow = "1.0"
+async-trait = "0.1"
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread", "fs", "io-util", "sync", "time"] }
+futures = "0.3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+strip = "debuginfo"
