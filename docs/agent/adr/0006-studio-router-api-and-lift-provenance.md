@@ -199,8 +199,8 @@ turn")` or `None`).
 ## Cross-references
 
 - ADR-0001 (stack — async tokio, Rust 2024 edition)
-- ADR-0004 (storage — ledger lives in `studio-store`, router
-  delegates)
+- ADR-0004 (storage — see §"Addendum 2026-05-11" below for the
+  ledger direction call resolving F-02 from Wave A1.1 review)
 - ADR-0005 (lift `cobrust-llm-router` as `studio-router`,
   consensus dropped)
 - Plan §H.2 (lift-vs-build reversal preserving B.1/B.2/B.3 audit
@@ -210,3 +210,134 @@ turn")` or `None`).
   @ SHA `61f2aff` (v0.1.1)
 - Upstream ADR-0004 (LLM router architecture, the design we're
   carrying)
+
+---
+
+## Addendum 2026-05-11 — post-A1.1 reality reconciliation
+
+> Per ADSD §F2 (preserve original audit trail; addendum supersedes,
+> §"Decision" text unchanged for blame integrity). External review
+> agent `studio-review-wave-a1-opus47` (12-finding audit, AMBER
+> verdict) flagged two binding-doc drifts from the as-built lift:
+
+### F-01 — corrected M1 dispatch contract
+
+The §"Decision" example block above shows a builder shape
+(`with_config` / `with_cache` / `with_ledger` / `from_toml`) that
+was speculative when ADR-0006 was written CTO-solo at Phase 1.
+P7 A1.1 lift implemented the upstream-faithful shape instead:
+
+```rust
+// The actual M1 dispatch contract (verified against lifted code):
+
+let cfg: RouterConfig = RouterConfig::from_toml_str(&toml_text)?;
+// cfg.router.cache_dir and cfg.router.ledger_path drive cache+ledger
+// construction inside RouterBuilder::build — they are not separately
+// injectable today (see F-02 below for the architectural decision).
+
+let provider: Arc<dyn LlmProvider> =
+    Arc::new(AnthropicProvider::new(/* api_key, model, base_url */)?);
+
+let router: Router = RouterBuilder::new()
+    .register_provider("anthropic_official", provider)
+    .build(&cfg)
+    .await?;
+
+let resp: DispatchResponse =
+    router.dispatch(CompletionRequest { /* ... */ }).await?;
+```
+
+Key points:
+
+- `RouterConfig::from_toml_str(&str)` is the loader (not
+  `from_toml(&path)`). Callers read the file themselves and pass
+  bytes/string.
+- `RouterBuilder::register_provider(key: &str, Arc<dyn LlmProvider>)`
+  is how providers attach (one call per provider; multiple OK).
+- `RouterBuilder::build(&cfg)` is `async` (returns `Future`) — it
+  opens the cache + ledger from `cfg.router` paths internally.
+- `Router::dispatch(req)` takes only the request — `task_tag`
+  plumbing is deferred (see F-03 below).
+
+**Type-level contract clarification**: the §"Decision" `pub use`
+table enumerates *types* that are part of the contract; methods
+on those types (e.g. `RouterBuilder::register_provider`,
+`Cache::default_dir`, `RouterConfig::from_toml_str`,
+`ledger::now_rfc3339`) are part of the contract for the
+enumerated types. Future amendments may freeze method-level
+surface separately if needed for v0.1.0 release.
+
+### F-02 — ledger direction: JSONL is canonical, studio-store reads
+
+The §"Context" item "ADR-0004: ledger writes go through
+`studio-store::ledger`" was an aspirational coupling that the
+A1.1 lift did not implement (router writes JSONL directly via
+its own `Ledger`). For 5-day MVP scope, we accept the as-built
+direction and amend the constraint:
+
+**Decision (addendum)**: `studio-router::Ledger` writes JSONL
+append-only to `cfg.router.ledger_path` as the canonical record.
+`studio-store::ledger` becomes a **reader** of that JSONL — on
+cold start it parses entries into a SQLite materialized view for
+fast `recent(n)` queries; on hot run it tails the file (via the
+existing `notify` infra slated for the watcher) to keep the view
+fresh.
+
+Rationale:
+
+- Decouples the two crates cleanly: router has zero dep on store,
+  store treats the JSONL as a file format.
+- JSONL is a stable wire format already shipping in upstream
+  Cobrust's `0.1.1`; we get parity for free.
+- M3 dogfood + M2 UI continue to read through
+  `studio-store::ledger` — they see the same data via the
+  materialized view; the UX is unchanged.
+- Avoids the trait-injection refactor that option (b) in the
+  finding F-02 §"Recommended fix" would have required.
+
+Forecloses: routing dispatches to multiple ledger sinks. If a
+future Studio variant needs that (e.g. mirror to a remote
+audit-log service), it'll need its own ADR. Not in 5-day scope.
+
+**Cross-references updated**: `studio-store` module-doc (Wave A2
+deliverable) must reflect "reads JSONL written by
+studio-router::Ledger; SQLite is the materialized view, not the
+source of truth". ADR-0004 stays consistent — "Markdown as source
+of truth, SQLite as index" applies to ADR/finding content;
+ledger entries flow filesystem → SQLite the same way (JSONL is
+the source of truth there, SQLite is the index).
+
+### F-03 — `task_tag` plumbing deferred to M1 dispatch wave
+
+Acknowledged. `Router::dispatch(req)` today produces ledger
+entries with `task_tag: None`. Wave A4 (studio-server `/api/dispatch`
+route) is the natural place to plumb caller-supplied tags. Three
+options surfaced by the review:
+(a) add field to `CompletionRequest`;
+(b) add second arg `dispatch(req, tag)`;
+(c) thread via a `DispatchContext` newtype.
+
+CTO call: **(c) DispatchContext** at A4 — most extensible (carries
+tag, span IDs, deadline hints in the future) without bloating
+`CompletionRequest`'s wire shape. Not blocking for A1.1 / A2 /
+A3; deferred to A4 task prompt.
+
+### Other findings tracked (not addendum-worthy)
+
+The remaining 9 findings (F-04 through F-12) are tracked in the
+Wave A1.1 review report; mechanical fixes land in subsequent
+docs/test sweeps or M2 polish. Specifically:
+
+- F-04 strip_invariants L2Verdict tripwire: landed in same commit
+  as this addendum (3 commented `_no_l2_verdict` / `_no_honest_gate`
+  / `_no_gate_verdict` lines added).
+- F-05 dead deps (`unicode-normalization`, `uuid`, `hex`, `tracing`):
+  Wave A2 polish — remove from `studio-router/Cargo.toml`.
+- F-06 module-doc test-count drift: Wave A2 polish — update breakdown.
+- F-07 SSE buffer cap: deferred to M2 (config-driven `StreamPolicy`).
+- F-08 RouterHandle decorative: deferred to M2+ refactor.
+- F-09 / F-11 pub-use order + Cache::default_dir method scope:
+  resolved by the §"Type-level contract clarification" note in F-01
+  above.
+- F-10 hardcoded 120s / 1024-tokens: deferred to M2 polish.
+- F-12 `now_rfc3339` flat re-export: defer; A4 dispatch wave decides.

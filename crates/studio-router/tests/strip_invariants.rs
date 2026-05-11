@@ -79,8 +79,16 @@ fn surface_imports_resolve_to_expected_targets() {
 // the test suite stays green; reviewers can flip one at a time to confirm
 // the strip is real.
 //
-// #[allow(dead_code)] fn _no_task_enum()        { let _: studio_router::Task;          }
-// #[allow(dead_code)] fn _no_routing_entry()    { let _: studio_router::RoutingEntry;  }
-// #[allow(dead_code)] fn _no_strategy_name()    { let _: studio_router::StrategyName;  }
+// Covers strips #1, #2, #3, #6 plus the lifted-but-unused-by-Studio symbols
+// (`L2Verdict` / `HonestGate` are no-op at pin `61f2aff` per finding
+// `a1-1-strip-2-noop-at-pin-61f2aff` — these tripwires arm strip #2 against
+// future pin bumps that re-introduce honest-gate machinery).
+//
+// #[allow(dead_code)] fn _no_task_enum()        { let _: studio_router::Task;            }
+// #[allow(dead_code)] fn _no_routing_entry()    { let _: studio_router::RoutingEntry;    }
+// #[allow(dead_code)] fn _no_strategy_name()    { let _: studio_router::StrategyName;    }
 // #[allow(dead_code)] fn _no_default_strategy() { let _: studio_router::DefaultStrategy; }
 // #[allow(dead_code)] fn _no_router_response()  { let _: studio_router::RouterResponse;  }
+// #[allow(dead_code)] fn _no_l2_verdict()       { let _: studio_router::L2Verdict;       }
+// #[allow(dead_code)] fn _no_honest_gate()      { let _: studio_router::HonestGate;      }
+// #[allow(dead_code)] fn _no_gate_verdict()     { let _: studio_router::GateVerdict;     }
