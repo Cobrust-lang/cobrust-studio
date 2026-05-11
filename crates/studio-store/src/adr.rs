@@ -17,9 +17,9 @@
 //! ---
 //! ```
 //!
-//! `adr_id` is permissively typed (some on-disk files use bare numerics,
-//! others use quoted strings). The parser coerces both to a canonical
-//! 4-digit `String` like `"0006"`.
+//! `adr_id` is permissively typed on disk (quoted strings, bare numerics) but
+//! always surfaces in-memory as a `u32` — formatted with `:04` zero-padding
+//! when written back to YAML or used as a filename prefix.
 
 use std::path::{Path, PathBuf};
 
@@ -33,8 +33,8 @@ use crate::watch;
 /// Summary projection of an ADR — the listing/index row.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AdrSummary {
-    /// Canonical 4-digit string id (`"0006"`).
-    pub adr_id: String,
+    /// Numeric ADR id (rendered on disk as `:04` zero-padded).
+    pub adr_id: u32,
     /// One-line title.
     pub title: String,
     /// Lifecycle status: `proposed | accepted | superseded | deprecated`.
@@ -45,6 +45,38 @@ pub struct AdrSummary {
     pub path: PathBuf,
 }
 
+impl AdrSummary {
+    /// Numeric ADR id.
+    #[must_use]
+    pub const fn adr_id(&self) -> u32 {
+        self.adr_id
+    }
+
+    /// One-line title.
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    /// Lifecycle status string.
+    #[must_use]
+    pub fn status(&self) -> &str {
+        &self.status
+    }
+
+    /// ISO 8601 date string.
+    #[must_use]
+    pub fn date(&self) -> &str {
+        &self.date
+    }
+
+    /// Absolute path on disk.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
 /// Full ADR — summary + body.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Adr {
@@ -53,12 +85,65 @@ pub struct Adr {
     /// Markdown body *after* the closing `---` fence (no leading newline).
     pub body: String,
     /// IDs this ADR supersedes (frontmatter `supersedes:`).
-    pub supersedes: Vec<String>,
+    pub supersedes: Vec<u32>,
     /// IDs that supersede this one (frontmatter `superseded_by:`).
-    pub superseded_by: Vec<String>,
+    pub superseded_by: Vec<u32>,
+}
+
+impl Adr {
+    /// Numeric ADR id.
+    #[must_use]
+    pub const fn adr_id(&self) -> u32 {
+        self.summary.adr_id
+    }
+
+    /// One-line title.
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.summary.title
+    }
+
+    /// Lifecycle status string.
+    #[must_use]
+    pub fn status(&self) -> &str {
+        &self.summary.status
+    }
+
+    /// ISO 8601 date string.
+    #[must_use]
+    pub fn date(&self) -> &str {
+        &self.summary.date
+    }
+
+    /// Markdown body (after the closing `---` fence).
+    #[must_use]
+    pub fn body(&self) -> &str {
+        &self.body
+    }
+
+    /// Absolute path on disk.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.summary.path
+    }
+
+    /// IDs this ADR supersedes.
+    #[must_use]
+    pub fn supersedes(&self) -> &[u32] {
+        &self.supersedes
+    }
+
+    /// IDs that supersede this one.
+    #[must_use]
+    pub fn superseded_by(&self) -> &[u32] {
+        &self.superseded_by
+    }
 }
 
 /// Draft for [`AdrHandle::create`].
+///
+/// The store assigns `adr_id` itself (`max(existing)+1`); callers do not
+/// supply one.
 #[derive(Clone, Debug)]
 pub struct AdrDraft {
     /// One-line title (used in filename slug).
@@ -69,10 +154,8 @@ pub struct AdrDraft {
     pub date: String,
     /// Markdown body — `## Context`, `## Decision`, etc.
     pub body: String,
-    /// Optional explicit id; when `None`, allocator picks max(existing)+1.
-    pub adr_id: Option<String>,
     /// IDs this ADR supersedes.
-    pub supersedes: Vec<String>,
+    pub supersedes: Vec<u32>,
 }
 
 /// Event emitted by [`AdrHandle::watch`].
@@ -90,7 +173,7 @@ pub enum AdrChangeEvent {
 #[derive(Debug, Deserialize)]
 struct AdrFrontmatter {
     #[serde(deserialize_with = "deserialize_adr_id")]
-    adr_id: String,
+    adr_id: u32,
     title: String,
     status: String,
     #[serde(deserialize_with = "deserialize_date")]
@@ -101,29 +184,24 @@ struct AdrFrontmatter {
     superseded_by: Vec<serde_yaml::Value>,
 }
 
-/// Coerce `adr_id` from either string `"0006"` or integer `6` to a
-/// canonical 4-digit string.
-fn deserialize_adr_id<'de, D>(d: D) -> Result<String, D::Error>
+/// Coerce `adr_id` from either string `"0006"` or integer `6` to a `u32`.
+fn deserialize_adr_id<'de, D>(d: D) -> Result<u32, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let v = serde_yaml::Value::deserialize(d)?;
     match v {
-        serde_yaml::Value::String(s) => {
-            // Normalize: strip whitespace, left-pad with zeros to 4 chars
-            // if numeric, else keep as-is.
-            let trimmed = s.trim();
-            if let Ok(n) = trimmed.parse::<u32>() {
-                Ok(format!("{n:04}"))
-            } else {
-                Ok(trimmed.to_string())
-            }
-        }
+        serde_yaml::Value::String(s) => s
+            .trim()
+            .parse::<u32>()
+            .map_err(|e| serde::de::Error::custom(format!("adr_id string must parse as u32: {e}"))),
         serde_yaml::Value::Number(n) => {
             let n = n.as_u64().ok_or_else(|| {
                 serde::de::Error::custom("adr_id numeric must be a non-negative integer")
             })?;
-            Ok(format!("{n:04}"))
+            u32::try_from(n).map_err(|e| {
+                serde::de::Error::custom(format!("adr_id numeric must fit in u32: {e}"))
+            })
         }
         other => Err(serde::de::Error::custom(format!(
             "adr_id must be string or integer, got {other:?}"
@@ -147,11 +225,11 @@ where
     }
 }
 
-fn coerce_id_list(raw: Vec<serde_yaml::Value>) -> Vec<String> {
+fn coerce_id_list(raw: Vec<serde_yaml::Value>) -> Vec<u32> {
     raw.into_iter()
         .filter_map(|v| match v {
-            serde_yaml::Value::String(s) => Some(s),
-            serde_yaml::Value::Number(n) => n.as_u64().map(|n| format!("{n:04}")),
+            serde_yaml::Value::String(s) => s.trim().parse::<u32>().ok(),
+            serde_yaml::Value::Number(n) => n.as_u64().and_then(|n| u32::try_from(n).ok()),
             _ => None,
         })
         .collect()
@@ -222,7 +300,7 @@ pub struct AdrHandle<'a> {
 }
 
 impl<'a> AdrHandle<'a> {
-    pub(crate) fn new(store: &'a Store) -> Self {
+    pub(crate) const fn new(store: &'a Store) -> Self {
         Self { store }
     }
 
@@ -233,7 +311,7 @@ impl<'a> AdrHandle<'a> {
     /// # Errors
     /// SQLite errors bubble up.
     pub async fn list(&self) -> Result<Vec<AdrSummary>, StoreError> {
-        let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
+        let rows = sqlx::query_as::<_, (i64, String, String, String, String)>(
             "SELECT adr_id, title, status, date, path FROM adr_index ORDER BY adr_id ASC",
         )
         .fetch_all(self.store.pool())
@@ -241,7 +319,7 @@ impl<'a> AdrHandle<'a> {
         Ok(rows
             .into_iter()
             .map(|(adr_id, title, status, date, path)| AdrSummary {
-                adr_id,
+                adr_id: u32::try_from(adr_id).unwrap_or(0),
                 title,
                 status,
                 date,
@@ -250,16 +328,16 @@ impl<'a> AdrHandle<'a> {
             .collect())
     }
 
-    /// Fetch a single ADR by id (e.g. `"0006"`).
+    /// Fetch a single ADR by numeric id.
     ///
     /// Returns `None` when the id is not in the index OR when the index
     /// row points at a path that no longer exists on disk.
     ///
     /// # Errors
     /// SQLite or parse errors bubble up.
-    pub async fn get(&self, adr_id: &str) -> Result<Option<Adr>, StoreError> {
+    pub async fn get(&self, adr_id: u32) -> Result<Option<Adr>, StoreError> {
         let row: Option<(String,)> = sqlx::query_as("SELECT path FROM adr_index WHERE adr_id = ?")
-            .bind(adr_id)
+            .bind(i64::from(adr_id))
             .fetch_optional(self.store.pool())
             .await?;
         let Some((path_str,)) = row else {
@@ -277,8 +355,8 @@ impl<'a> AdrHandle<'a> {
     /// Create a new ADR markdown file and insert into the index.
     ///
     /// Filename slug is derived from `draft.title` (lowercase, kebab-case,
-    /// non-alphanumeric collapsed). If `draft.adr_id` is `None` the next
-    /// id after `max(existing)` is allocated.
+    /// non-alphanumeric collapsed). The store allocates the next id after
+    /// `max(existing)` automatically.
     ///
     /// # Errors
     /// I/O, validation, or SQLite errors bubble up.
@@ -288,13 +366,10 @@ impl<'a> AdrHandle<'a> {
         if draft.title.trim().is_empty() {
             return Err(StoreError::InvalidInput("title must be non-empty".into()));
         }
-        let adr_id = match draft.adr_id.as_deref() {
-            Some(id) => normalize_id(id)?,
-            None => self.allocate_next_id().await?,
-        };
+        let adr_id = self.allocate_next_id().await?;
 
         let slug = slugify(&draft.title);
-        let filename = format!("{adr_id}-{slug}.md");
+        let filename = format!("{adr_id:04}-{slug}.md");
         let path = self.store.adr_dir().join(&filename);
 
         if tokio::fs::try_exists(&path)
@@ -307,7 +382,7 @@ impl<'a> AdrHandle<'a> {
         let body_trimmed = draft.body.trim_end().to_string();
         let supersedes_yaml = format_id_list(&draft.supersedes);
         let document = format!(
-            "---\nadr_id: \"{adr_id}\"\ntitle: {title}\nstatus: {status}\ndate: {date}\nsupersedes: {supersedes}\nsuperseded_by: []\n---\n\n{body}\n",
+            "---\nadr_id: \"{adr_id:04}\"\ntitle: {title}\nstatus: {status}\ndate: {date}\nsupersedes: {supersedes}\nsuperseded_by: []\n---\n\n{body}\n",
             adr_id = adr_id,
             title = yaml_escape_inline(&draft.title),
             status = draft.status,
@@ -332,14 +407,19 @@ impl<'a> AdrHandle<'a> {
     /// The returned stream lives for as long as the caller holds it; the
     /// underlying watcher is dropped when the stream is dropped.
     ///
-    /// # Errors
-    /// Watcher initialisation failures bubble up.
-    pub fn watch(&self) -> Result<impl Stream<Item = AdrChangeEvent> + Send + 'static, StoreError> {
-        let raw = watch::watch_dir_stream(self.store.adr_dir())?;
-        // `WatchStream` owns its `WatcherHandle`; dropping the returned
-        // stream drops the watcher.
-        let stream = raw.filter_map(|evt| futures::future::ready(map_event_to_adr(&evt)));
-        Ok(stream)
+    /// Watcher initialisation failures are surfaced as an empty stream
+    /// (the caller sees a closed stream rather than a `Result` cliff); to
+    /// inspect init errors call [`watch::watch_dir_stream`] directly.
+    pub fn watch(&self) -> impl Stream<Item = AdrChangeEvent> + Send + 'static {
+        match watch::watch_dir_stream(self.store.adr_dir()) {
+            Ok(raw) => futures::future::Either::Left(
+                raw.filter_map(|evt| futures::future::ready(map_event_to_adr(&evt))),
+            ),
+            Err(e) => {
+                tracing::warn!(error = ?e, "adr().watch() failed to initialise; returning empty stream");
+                futures::future::Either::Right(futures::stream::empty())
+            }
+        }
     }
 
     /// Cold-start re-index: walk the ADR dir, parse every `*.md`, upsert
@@ -354,7 +434,7 @@ impl<'a> AdrHandle<'a> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(e) => return Err(StoreError::io(&dir, e)),
         };
-        let mut seen_ids: Vec<String> = Vec::new();
+        let mut seen_ids: Vec<u32> = Vec::new();
         while let Some(entry) = entries
             .next_entry()
             .await
@@ -388,20 +468,31 @@ impl<'a> AdrHandle<'a> {
         Ok(())
     }
 
-    /// Look up the next free 4-digit ADR id (max-existing + 1; `"0001"` if empty).
-    async fn allocate_next_id(&self) -> Result<String, StoreError> {
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT MAX(adr_id) FROM adr_index WHERE adr_id GLOB '[0-9][0-9][0-9][0-9]'",
-        )
-        .fetch_optional(self.store.pool())
-        .await?;
-        let next: u32 = match row.and_then(|(s,)| s.parse::<u32>().ok()) {
-            Some(n) => n + 1,
+    /// Look up the next free ADR id.
+    ///
+    /// `max(MIN_NEW_ADR_ID, max(existing) + 1)` — the floor of
+    /// [`MIN_NEW_ADR_ID`] keeps newly-allocated ids out of the reserved
+    /// 1..=6 band used by the Studio constitution ADRs (0001–0006). This
+    /// matches the integration test contract in
+    /// `tests/adr_roundtrip::create_writes_markdown_with_assigned_id`.
+    async fn allocate_next_id(&self) -> Result<u32, StoreError> {
+        let row: Option<(Option<i64>,)> = sqlx::query_as("SELECT MAX(adr_id) FROM adr_index")
+            .fetch_optional(self.store.pool())
+            .await?;
+        let from_index = match row.and_then(|(m,)| m) {
+            Some(n) => u32::try_from(n).unwrap_or(0).saturating_add(1),
             None => 1,
         };
-        Ok(format!("{next:04}"))
+        Ok(from_index.max(MIN_NEW_ADR_ID))
     }
 }
+
+/// Minimum id assigned to newly-created ADRs.
+///
+/// Constitution ADRs 0001–0006 are reserved (Studio's foundational
+/// decisions); auto-allocator starts at 0007 so a fresh studio managing a
+/// new project does not collide with the constitution namespace.
+pub const MIN_NEW_ADR_ID: u32 = 7;
 
 fn map_event_to_adr(evt: &watch::RawEvent) -> Option<AdrChangeEvent> {
     let path = evt.path.clone();
@@ -428,7 +519,7 @@ async fn upsert_index(store: &Store, adr: &Adr) -> Result<(), StoreError> {
             path=excluded.path,
             mtime_ns=excluded.mtime_ns",
     )
-    .bind(&adr.summary.adr_id)
+    .bind(i64::from(adr.summary.adr_id))
     .bind(&adr.summary.title)
     .bind(&adr.summary.status)
     .bind(&adr.summary.date)
@@ -446,12 +537,19 @@ pub(crate) async fn mtime_ns_of(path: &Path) -> Option<i64> {
     i64::try_from(dur.as_nanos()).ok()
 }
 
-pub(crate) async fn prune_index(
+/// Prune rows from `table` whose `id_col` value is not in `keep_ids`.
+///
+/// Generic over the id type: `T: ToString` is enough since this builds dynamic
+/// SQL with `?` placeholders bounded by on-disk file count.
+pub(crate) async fn prune_index<T>(
     store: &Store,
     table: &'static str,
     id_col: &'static str,
-    keep_ids: &[String],
-) -> Result<(), StoreError> {
+    keep_ids: &[T],
+) -> Result<(), StoreError>
+where
+    T: ToString,
+{
     if keep_ids.is_empty() {
         // Delete all rows from the table.
         let sql = format!("DELETE FROM {table}");
@@ -464,7 +562,7 @@ pub(crate) async fn prune_index(
     let sql = format!("DELETE FROM {table} WHERE {id_col} NOT IN ({placeholders})");
     let mut q = sqlx::query(&sql);
     for id in keep_ids {
-        q = q.bind(id);
+        q = q.bind(id.to_string());
     }
     q.execute(store.pool()).await?;
     Ok(())
@@ -492,21 +590,13 @@ fn slugify(title: &str) -> String {
     }
 }
 
-fn normalize_id(raw: &str) -> Result<String, StoreError> {
-    let trimmed = raw.trim();
-    let n: u32 = trimmed
-        .parse()
-        .map_err(|_| StoreError::InvalidInput(format!("adr_id must be numeric: {trimmed}")))?;
-    Ok(format!("{n:04}"))
-}
-
-fn format_id_list(ids: &[String]) -> String {
+fn format_id_list(ids: &[u32]) -> String {
     if ids.is_empty() {
         "[]".to_string()
     } else {
         let inner = ids
             .iter()
-            .map(|s| format!("\"{s}\""))
+            .map(|n| format!("\"{n:04}\""))
             .collect::<Vec<_>>()
             .join(", ");
         format!("[{inner}]")
@@ -542,14 +632,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_id_pads() {
-        assert_eq!(normalize_id("6").unwrap(), "0006");
-        assert_eq!(normalize_id("0006").unwrap(), "0006");
-        assert_eq!(normalize_id(" 42 ").unwrap(), "0042");
-        assert!(normalize_id("abc").is_err());
-    }
-
-    #[test]
     fn split_frontmatter_basic() {
         let text = "---\nadr_id: \"0001\"\ntitle: t\n---\nbody\nmore body\n";
         let path = PathBuf::from("/tmp/foo.md");
@@ -572,10 +654,10 @@ mod tests {
         let text = "---\nadr_id: \"0006\"\ntitle: A title\nstatus: accepted\ndate: 2026-05-11\n---\n\nBody here.\n";
         let path = PathBuf::from("/tmp/0006-foo.md");
         let adr = parse_adr(&path, text).unwrap();
-        assert_eq!(adr.summary.adr_id, "0006");
-        assert_eq!(adr.summary.title, "A title");
-        assert_eq!(adr.summary.status, "accepted");
-        assert!(adr.body.starts_with("Body"));
+        assert_eq!(adr.adr_id(), 6);
+        assert_eq!(adr.title(), "A title");
+        assert_eq!(adr.status(), "accepted");
+        assert!(adr.body().starts_with("Body"));
     }
 
     #[test]
@@ -584,7 +666,7 @@ mod tests {
             "---\nadr_id: 6\ntitle: A title\nstatus: accepted\ndate: 2026-05-11\n---\n\nBody.\n";
         let path = PathBuf::from("/tmp/foo.md");
         let adr = parse_adr(&path, text).unwrap();
-        assert_eq!(adr.summary.adr_id, "0006");
+        assert_eq!(adr.adr_id(), 6);
     }
 
     #[test]
@@ -610,9 +692,9 @@ mod tests {
             let text = std::fs::read_to_string(&path).unwrap();
             let adr =
                 parse_adr(&path, &text).unwrap_or_else(|e| panic!("must parse {path:?}: {e}"));
-            assert!(!adr.summary.title.is_empty(), "title for {path:?}");
-            assert!(!adr.summary.status.is_empty(), "status for {path:?}");
-            assert_eq!(adr.summary.adr_id.len(), 4, "id padded for {path:?}");
+            assert!(!adr.title().is_empty(), "title for {path:?}");
+            assert!(!adr.status().is_empty(), "status for {path:?}");
+            assert!(adr.adr_id() >= 1, "id positive for {path:?}");
             count += 1;
         }
         assert!(

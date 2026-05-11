@@ -64,6 +64,13 @@ pub const ADR_DIR: &str = "docs/agent/adr";
 /// Default findings directory relative to project root.
 pub const FINDING_DIR: &str = "docs/agent/findings";
 
+/// Default router-ledger JSONL path (relative to project root).
+///
+/// Per ADR-0006 §"Addendum 2026-05-11" §F-02: `studio-router::Ledger`
+/// writes this file; `studio-store::ledger` reads it on cold start to
+/// repopulate the materialised view.
+pub const LEDGER_JSONL_PATH: &str = ".cobrust-studio/router/ledger.jsonl";
+
 /// Aggregate handle for the studio-store persistence layer.
 ///
 /// Cheap to clone; all clones share the same underlying connection pool
@@ -79,6 +86,7 @@ struct StoreInner {
     adr_dir: PathBuf,
     finding_dir: PathBuf,
     db_path: PathBuf,
+    ledger_jsonl_path: PathBuf,
     pool: SqlitePool,
 }
 
@@ -125,11 +133,13 @@ impl Store {
             .connect_with(options)
             .await?;
 
+        let ledger_jsonl_path = project_root.join(LEDGER_JSONL_PATH);
         let inner = StoreInner {
             project_root,
             adr_dir,
             finding_dir,
             db_path,
+            ledger_jsonl_path,
             pool,
         };
 
@@ -140,6 +150,11 @@ impl Store {
         store.migrate().await?;
         store.adr().reindex().await?;
         store.finding().reindex().await?;
+        // Cold-start sync of the router JSONL ledger into the materialised
+        // view — ADR-0006 §F-02: router writes, store reads. Missing file
+        // is a no-op (router has not appended yet).
+        let jsonl = store.ledger_jsonl_path().to_path_buf();
+        store.ledger().sync_from_jsonl(&jsonl).await?;
 
         Ok(store)
     }
@@ -166,6 +181,14 @@ impl Store {
     #[must_use]
     pub fn db_path(&self) -> &Path {
         &self.inner.db_path
+    }
+
+    /// Conventional path to the router-ledger JSONL file.
+    ///
+    /// `<project_root>/.cobrust-studio/router/ledger.jsonl`.
+    #[must_use]
+    pub fn ledger_jsonl_path(&self) -> &Path {
+        &self.inner.ledger_jsonl_path
     }
 
     /// Borrow the underlying connection pool.
@@ -203,7 +226,7 @@ impl Store {
         // Inline schema (no separate migrations dir for M1 — single revision).
         let schema = r"
             CREATE TABLE IF NOT EXISTS adr_index (
-                adr_id     TEXT PRIMARY KEY,
+                adr_id     INTEGER PRIMARY KEY,
                 title      TEXT NOT NULL,
                 status     TEXT NOT NULL,
                 date       TEXT NOT NULL,
@@ -215,6 +238,7 @@ impl Store {
                 finding_id TEXT PRIMARY KEY,
                 title      TEXT NOT NULL,
                 status     TEXT NOT NULL,
+                severity   TEXT NOT NULL DEFAULT 'P3',
                 date       TEXT NOT NULL,
                 path       TEXT NOT NULL,
                 mtime_ns   INTEGER NOT NULL DEFAULT 0

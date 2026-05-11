@@ -7,13 +7,15 @@
 //! doc_kind: finding
 //! finding_id: <slug>
 //! last_verified_commit: <sha>
+//! severity: P1 | P2 | P3 | P4
+//! status: open | closed_by_aX.Y
 //! dependencies: [adr:NNNN, finding:slug, ...]
+//! related: [...]
 //! ---
 //! ```
 //!
-//! Additionally the real on-disk files carry optional `status`,
-//! `severity`, `discovered_by`, `related` fields — we accept them and
-//! surface `status` + `last_verified_commit` (as `date`) on the summary.
+//! All frontmatter fields except `finding_id` are optional; the parser fills
+//! sensible defaults (`status` → `"open"`, `severity` → `"P3"`) when absent.
 
 use std::path::{Path, PathBuf};
 
@@ -36,12 +38,52 @@ pub struct FindingSummary {
     /// Lifecycle status (`open`, `closed_by_aX.Y`, etc.). Defaults to
     /// `"open"` when the file omits the field.
     pub status: String,
+    /// Severity tag (`P1`/`P2`/`P3`/`P4`). Defaults to `"P3"`.
+    pub severity: String,
     /// Date stamp — uses `last_verified_commit` when no `date` field
     /// is present (kept as a free-form string so callers can render
     /// either a SHA or an ISO date).
     pub date: String,
     /// Absolute path on disk.
     pub path: PathBuf,
+}
+
+impl FindingSummary {
+    /// Slug id.
+    #[must_use]
+    pub fn finding_id(&self) -> &str {
+        &self.finding_id
+    }
+
+    /// One-line title.
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    /// Lifecycle status string.
+    #[must_use]
+    pub fn status(&self) -> &str {
+        &self.status
+    }
+
+    /// Severity tag.
+    #[must_use]
+    pub fn severity(&self) -> &str {
+        &self.severity
+    }
+
+    /// Date stamp / verified-commit field.
+    #[must_use]
+    pub fn date(&self) -> &str {
+        &self.date
+    }
+
+    /// Absolute path on disk.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
 }
 
 /// Full finding — summary + body.
@@ -53,6 +95,64 @@ pub struct Finding {
     pub body: String,
     /// `dependencies: [...]` frontmatter list, surfaced as raw strings.
     pub dependencies: Vec<String>,
+    /// `related: [...]` frontmatter list, surfaced as raw strings.
+    pub related: Vec<String>,
+}
+
+impl Finding {
+    /// Slug id.
+    #[must_use]
+    pub fn finding_id(&self) -> &str {
+        &self.summary.finding_id
+    }
+
+    /// One-line title.
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.summary.title
+    }
+
+    /// Lifecycle status string.
+    #[must_use]
+    pub fn status(&self) -> &str {
+        &self.summary.status
+    }
+
+    /// Severity tag.
+    #[must_use]
+    pub fn severity(&self) -> &str {
+        &self.summary.severity
+    }
+
+    /// Date stamp / verified-commit field.
+    #[must_use]
+    pub fn date(&self) -> &str {
+        &self.summary.date
+    }
+
+    /// Markdown body (after the closing `---` fence).
+    #[must_use]
+    pub fn body(&self) -> &str {
+        &self.body
+    }
+
+    /// Absolute path on disk.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.summary.path
+    }
+
+    /// `dependencies: [...]` list.
+    #[must_use]
+    pub fn dependencies(&self) -> &[String] {
+        &self.dependencies
+    }
+
+    /// `related: [...]` list.
+    #[must_use]
+    pub fn related(&self) -> &[String] {
+        &self.related
+    }
 }
 
 /// Draft for [`FindingHandle::create`].
@@ -60,16 +160,20 @@ pub struct Finding {
 pub struct FindingDraft {
     /// Slug id; must be unique. Used as the filename stem.
     pub finding_id: String,
+    /// `last_verified_commit` field.
+    pub last_verified_commit: String,
+    /// Severity tag (`P1`/`P2`/`P3`/`P4`).
+    pub severity: String,
+    /// Lifecycle status; defaults to `"open"`.
+    pub status: String,
+    /// `dependencies` list (e.g. `["adr:0006"]`).
+    pub dependencies: Vec<String>,
+    /// `related` list (free-form references).
+    pub related: Vec<String>,
     /// One-line title (rendered as `# {title}` at the top of body).
     pub title: String,
     /// Markdown body (sections `## Hypothesis` etc.).
     pub body: String,
-    /// Lifecycle status; defaults to `"open"`.
-    pub status: String,
-    /// `last_verified_commit` field.
-    pub last_verified_commit: String,
-    /// `dependencies` list (e.g. `["adr:0006"]`).
-    pub dependencies: Vec<String>,
 }
 
 /// Event emitted by [`FindingHandle::watch`].
@@ -88,17 +192,25 @@ struct FindingFrontmatter {
     finding_id: String,
     #[serde(default = "default_status")]
     status: String,
+    #[serde(default = "default_severity")]
+    severity: String,
     #[serde(default)]
     last_verified_commit: String,
     #[serde(default)]
     dependencies: Vec<serde_yaml::Value>,
+    #[serde(default)]
+    related: Vec<serde_yaml::Value>,
 }
 
 fn default_status() -> String {
     "open".to_string()
 }
 
-fn coerce_dep_list(raw: Vec<serde_yaml::Value>) -> Vec<String> {
+fn default_severity() -> String {
+    "P3".to_string()
+}
+
+fn coerce_str_list(raw: Vec<serde_yaml::Value>) -> Vec<String> {
     raw.into_iter()
         .filter_map(|v| match v {
             serde_yaml::Value::String(s) => Some(s),
@@ -166,11 +278,13 @@ pub fn parse_finding(path: &Path, text: &str) -> Result<Finding, StoreError> {
             finding_id: fm.finding_id,
             title,
             status: fm.status,
+            severity: fm.severity,
             date: fm.last_verified_commit,
             path: path.to_path_buf(),
         },
         body: body_trimmed,
-        dependencies: coerce_dep_list(fm.dependencies),
+        dependencies: coerce_str_list(fm.dependencies),
+        related: coerce_str_list(fm.related),
     })
 }
 
@@ -181,7 +295,7 @@ pub struct FindingHandle<'a> {
 }
 
 impl<'a> FindingHandle<'a> {
-    pub(crate) fn new(store: &'a Store) -> Self {
+    pub(crate) const fn new(store: &'a Store) -> Self {
         Self { store }
     }
 
@@ -190,20 +304,23 @@ impl<'a> FindingHandle<'a> {
     /// # Errors
     /// SQLite errors bubble up.
     pub async fn list(&self) -> Result<Vec<FindingSummary>, StoreError> {
-        let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
-            "SELECT finding_id, title, status, date, path FROM finding_index ORDER BY finding_id ASC",
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, String)>(
+            "SELECT finding_id, title, status, severity, date, path FROM finding_index ORDER BY finding_id ASC",
         )
         .fetch_all(self.store.pool())
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(finding_id, title, status, date, path)| FindingSummary {
-                finding_id,
-                title,
-                status,
-                date,
-                path: PathBuf::from(path),
-            })
+            .map(
+                |(finding_id, title, status, severity, date, path)| FindingSummary {
+                    finding_id,
+                    title,
+                    status,
+                    severity,
+                    date,
+                    path: PathBuf::from(path),
+                },
+            )
             .collect())
     }
 
@@ -259,24 +376,22 @@ impl<'a> FindingHandle<'a> {
         } else {
             draft.status.clone()
         };
-        let deps_yaml = if draft.dependencies.is_empty() {
-            "[]".to_string()
+        let severity = if draft.severity.trim().is_empty() {
+            "P3".to_string()
         } else {
-            let inner = draft
-                .dependencies
-                .iter()
-                .map(|d| format!("\"{d}\""))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("[{inner}]")
+            draft.severity.clone()
         };
+        let deps_yaml = format_str_list(&draft.dependencies);
+        let related_yaml = format_str_list(&draft.related);
 
         let document = format!(
-            "---\ndoc_kind: finding\nfinding_id: {slug}\nlast_verified_commit: {commit}\nstatus: {status}\ndependencies: {deps}\n---\n\n# {title}\n\n{body}\n",
+            "---\ndoc_kind: finding\nfinding_id: {slug}\nlast_verified_commit: {commit}\nseverity: {severity}\nstatus: {status}\ndependencies: {deps}\nrelated: {related}\n---\n\n# {title}\n\n{body}\n",
             slug = slug,
             commit = draft.last_verified_commit,
+            severity = severity,
             status = status,
             deps = deps_yaml,
+            related = related_yaml,
             title = draft.title,
             body = draft.body.trim_end(),
         );
@@ -291,14 +406,17 @@ impl<'a> FindingHandle<'a> {
 
     /// Stream of [`FindingChangeEvent`].
     ///
-    /// # Errors
-    /// Watcher initialisation failures bubble up.
-    pub fn watch(
-        &self,
-    ) -> Result<impl Stream<Item = FindingChangeEvent> + Send + 'static, StoreError> {
-        let raw = watch::watch_dir_stream(self.store.finding_dir())?;
-        let stream = raw.filter_map(|evt| futures::future::ready(map_event_to_finding(&evt)));
-        Ok(stream)
+    /// Watcher initialisation failures are surfaced as an empty stream.
+    pub fn watch(&self) -> impl Stream<Item = FindingChangeEvent> + Send + 'static {
+        match watch::watch_dir_stream(self.store.finding_dir()) {
+            Ok(raw) => futures::future::Either::Left(
+                raw.filter_map(|evt| futures::future::ready(map_event_to_finding(&evt))),
+            ),
+            Err(e) => {
+                tracing::warn!(error = ?e, "finding().watch() failed to initialise; returning empty stream");
+                futures::future::Either::Right(futures::stream::empty())
+            }
+        }
     }
 
     /// Cold-start re-index of `docs/agent/findings/`.
@@ -356,15 +474,29 @@ fn map_event_to_finding(evt: &watch::RawEvent) -> Option<FindingChangeEvent> {
     })
 }
 
+fn format_str_list(items: &[String]) -> String {
+    if items.is_empty() {
+        "[]".to_string()
+    } else {
+        let inner = items
+            .iter()
+            .map(|d| format!("\"{d}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("[{inner}]")
+    }
+}
+
 async fn upsert_index(store: &Store, finding: &Finding) -> Result<(), StoreError> {
     let path = finding.summary.path.to_string_lossy().to_string();
     let mtime_ns = mtime_ns_of(&finding.summary.path).await.unwrap_or(0);
     sqlx::query(
-        "INSERT INTO finding_index (finding_id, title, status, date, path, mtime_ns)
-         VALUES (?, ?, ?, ?, ?, ?)
+        "INSERT INTO finding_index (finding_id, title, status, severity, date, path, mtime_ns)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(finding_id) DO UPDATE SET
             title=excluded.title,
             status=excluded.status,
+            severity=excluded.severity,
             date=excluded.date,
             path=excluded.path,
             mtime_ns=excluded.mtime_ns",
@@ -372,6 +504,7 @@ async fn upsert_index(store: &Store, finding: &Finding) -> Result<(), StoreError
     .bind(&finding.summary.finding_id)
     .bind(&finding.summary.title)
     .bind(&finding.summary.status)
+    .bind(&finding.summary.severity)
     .bind(&finding.summary.date)
     .bind(&path)
     .bind(mtime_ns)
@@ -390,11 +523,12 @@ mod tests {
         let text = "---\ndoc_kind: finding\nfinding_id: foo-bar\nlast_verified_commit: abc123\ndependencies: [adr:0006]\n---\n\n# Foo bar\n\nbody\n";
         let path = PathBuf::from("/tmp/foo-bar.md");
         let f = parse_finding(&path, text).unwrap();
-        assert_eq!(f.summary.finding_id, "foo-bar");
-        assert_eq!(f.summary.title, "Foo bar");
-        assert_eq!(f.summary.status, "open"); // default
-        assert_eq!(f.summary.date, "abc123");
-        assert_eq!(f.dependencies, vec!["adr:0006".to_string()]);
+        assert_eq!(f.finding_id(), "foo-bar");
+        assert_eq!(f.title(), "Foo bar");
+        assert_eq!(f.status(), "open"); // default
+        assert_eq!(f.severity(), "P3"); // default
+        assert_eq!(f.date(), "abc123");
+        assert_eq!(f.dependencies(), &["adr:0006".to_string()]);
     }
 
     #[test]
@@ -408,10 +542,10 @@ mod tests {
         let path = workspace_root.join("docs/agent/findings/a1-1-strip-2-noop-at-pin-61f2aff.md");
         let text = std::fs::read_to_string(&path).unwrap();
         let f = parse_finding(&path, &text).unwrap();
-        assert_eq!(f.summary.finding_id, "a1-1-strip-2-noop-at-pin-61f2aff");
-        assert_eq!(f.summary.status, "closed_by_a1.1");
-        assert!(!f.summary.title.is_empty());
-        assert!(f.dependencies.iter().any(|d| d == "adr:0006"));
+        assert_eq!(f.finding_id(), "a1-1-strip-2-noop-at-pin-61f2aff");
+        assert_eq!(f.status(), "closed_by_a1.1");
+        assert!(!f.title().is_empty());
+        assert!(f.dependencies().iter().any(|d| d == "adr:0006"));
     }
 
     #[test]
