@@ -10,9 +10,11 @@
 //! MUST keep `handle` alive for as long as it reads from `rx` — dropping
 //! the handle cancels the watcher and closes the channel.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 
 use futures::Stream;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -21,8 +23,17 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::error::StoreError;
 
+/// Debounce window for the `WatchStream` coalescer.
+///
+/// `notify` reports many low-level events per logical file change
+/// (macOS FSEvents in particular fires 1-3 events per `tokio::fs::write`).
+/// We coalesce repeat events per `(path, kind)` within this window into a
+/// single emission. 200ms is long enough to absorb typical OS-level
+/// chattiness without making fresh writes feel laggy.
+pub const DEBOUNCE_WINDOW: Duration = Duration::from_millis(200);
+
 /// Coarse filesystem event kind.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum EventKind {
     /// File was created.
     Create,
@@ -108,8 +119,14 @@ fn map_kind(k: notify::EventKind) -> Option<EventKind> {
 ///
 /// Returned by [`watch_dir_stream`]; consumers usually pipe through a
 /// `filter_map` to project into `AdrChangeEvent` / `FindingChangeEvent`.
+///
+/// Coalesces repeat events per `(path, kind)` within
+/// [`DEBOUNCE_WINDOW`] so a single logical file change emits at most one
+/// event even when the underlying OS (e.g. macOS FSEvents) fires several.
 pub struct WatchStream {
     inner: ReceiverStream<RawEvent>,
+    /// Most-recent emission timestamp for a `(path, kind)` bucket.
+    last_emitted: HashMap<(PathBuf, EventKind), Instant>,
     // Drop order matters: ReceiverStream first, then the watcher. Rust
     // drops fields in declaration order, so this is correct.
     _handle: WatcherHandle,
@@ -127,7 +144,24 @@ impl Stream for WatchStream {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // Safety: WatchStream is Unpin because all its fields are Unpin.
         let this = self.get_mut();
-        Pin::new(&mut this.inner).poll_next(cx)
+        loop {
+            match Pin::new(&mut this.inner).poll_next(cx) {
+                Poll::Ready(Some(evt)) => {
+                    let now = Instant::now();
+                    let key = (evt.path.clone(), evt.kind);
+                    let stale = this
+                        .last_emitted
+                        .get(&key)
+                        .is_none_or(|t| now.duration_since(*t) >= DEBOUNCE_WINDOW);
+                    if stale {
+                        this.last_emitted.insert(key, now);
+                        return Poll::Ready(Some(evt));
+                    }
+                    // Suppressed: re-poll for the next event.
+                }
+                other => return other,
+            }
+        }
     }
 }
 
@@ -141,6 +175,7 @@ pub fn watch_dir_stream(dir: &Path) -> Result<WatchStream, StoreError> {
     let (rx, handle) = watch_dir(dir)?;
     Ok(WatchStream {
         inner: ReceiverStream::new(rx),
+        last_emitted: HashMap::new(),
         _handle: handle,
     })
 }
