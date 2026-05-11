@@ -23,8 +23,6 @@
 
 use std::path::Path;
 
-use tokio::io::AsyncBufReadExt;
-
 use crate::Store;
 use crate::error::StoreError;
 
@@ -47,7 +45,7 @@ pub struct LedgerHandle<'a> {
 }
 
 impl<'a> LedgerHandle<'a> {
-    pub(crate) fn new(store: &'a Store) -> Self {
+    pub(crate) const fn new(store: &'a Store) -> Self {
         Self { store }
     }
 
@@ -160,14 +158,16 @@ impl<'a> LedgerHandle<'a> {
     /// dir and re-call `sync_from_jsonl` when a Modify event fires —
     /// for M1 we keep it explicit rather than auto-tailing.
     ///
+    /// Per `studio_router::ledger` docstring: "readers must tolerate at
+    /// most one trailing partial line in case of crash mid-write". The
+    /// last line is treated as discardable when it fails to parse —
+    /// earlier partial lines are still an error.
+    ///
     /// # Errors
-    /// I/O or JSON-parse errors bubble up. A malformed line aborts the
-    /// import and returns the line number that failed; partial writes
-    /// to the view are NOT rolled back (the view is regenerated on next
-    /// successful sync).
+    /// I/O or JSON-parse errors bubble up (except the last-line tail).
     pub async fn sync_from_jsonl(&self, path: &Path) -> Result<usize, StoreError> {
-        let file = match tokio::fs::File::open(path).await {
-            Ok(f) => f,
+        let bytes = match tokio::fs::read(path).await {
+            Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
             Err(e) => return Err(StoreError::io(path, e)),
         };
@@ -175,25 +175,39 @@ impl<'a> LedgerHandle<'a> {
         // (rather than accumulating duplicates across repeated calls).
         self.clear().await?;
 
-        let reader = tokio::io::BufReader::new(file);
-        let mut lines = reader.lines();
+        let text = String::from_utf8_lossy(&bytes);
+        // Detect a trailing partial line (final byte != '\n').
+        let has_trailing_partial = !bytes.is_empty() && bytes.last() != Some(&b'\n');
+
+        let lines: Vec<&str> = text.lines().collect();
+        let total = lines.len();
         let mut imported = 0_usize;
-        let mut line_no = 0_usize;
-        while let Some(line) = lines
-            .next_line()
-            .await
-            .map_err(|e| StoreError::io(path, e))?
-        {
-            line_no += 1;
+        for (idx, line) in lines.iter().enumerate() {
+            let line_no = idx + 1;
             if line.trim().is_empty() {
                 continue;
             }
-            let entry: LedgerEntry =
-                serde_json::from_str(&line).map_err(|source| StoreError::LedgerParse {
-                    path: path.to_path_buf(),
-                    line: line_no,
-                    source,
-                })?;
+            // Tolerate the trailing partial line specifically: if parse
+            // fails AND this is the last line AND the file does not end
+            // with '\n', skip it silently (router crashed mid-write).
+            let entry: LedgerEntry = match serde_json::from_str::<LedgerEntry>(line) {
+                Ok(e) => e,
+                Err(source) => {
+                    if has_trailing_partial && line_no == total {
+                        tracing::debug!(
+                            ?path,
+                            line = line_no,
+                            "tolerating trailing partial JSONL line"
+                        );
+                        continue;
+                    }
+                    return Err(StoreError::LedgerParse {
+                        path: path.to_path_buf(),
+                        line: line_no,
+                        source,
+                    });
+                }
+            };
             self.append(&entry).await?;
             imported += 1;
         }
