@@ -108,7 +108,7 @@ impl<'a> LedgerHandle<'a> {
     pub async fn recent(&self, n: usize) -> Result<Vec<LedgerEntry>, StoreError> {
         let limit = i64::try_from(n).unwrap_or(i64::MAX);
         let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT raw_json FROM ledger_view ORDER BY rowid DESC LIMIT ?")
+            sqlx::query_as("SELECT raw_json FROM ledger_view ORDER BY ts DESC, rowid DESC LIMIT ?")
                 .bind(limit)
                 .fetch_all(self.store.pool())
                 .await?;

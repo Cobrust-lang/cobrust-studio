@@ -144,6 +144,12 @@ impl Stream for WatchStream {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // Safety: WatchStream is Unpin because all its fields are Unpin.
         let this = self.get_mut();
+        // GC stale debounce entries — anything older than DEBOUNCE_WINDOW no
+        // longer suppresses, so we evict to keep the map bounded for
+        // long-running watchers (per A2 守闸 finding F-A2-02).
+        let now_gc = Instant::now();
+        this.last_emitted
+            .retain(|_, t| now_gc.duration_since(*t) < DEBOUNCE_WINDOW);
         loop {
             match Pin::new(&mut this.inner).poll_next(cx) {
                 Poll::Ready(Some(evt)) => {

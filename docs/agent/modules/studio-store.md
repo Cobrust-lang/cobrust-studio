@@ -1,7 +1,7 @@
 ---
 doc_kind: module
 module_id: studio-store
-last_verified_commit: HEAD
+last_verified_commit: 36651a4
 dependencies: [adr:0003, adr:0004, adr:0006]
 ---
 
