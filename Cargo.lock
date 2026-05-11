@@ -2276,6 +2276,8 @@ version = "0.0.1"
 dependencies = [
  "axum",
  "clap",
+ "http",
+ "http-body-util",
  "reqwest",
  "serde",
  "serde_json",
