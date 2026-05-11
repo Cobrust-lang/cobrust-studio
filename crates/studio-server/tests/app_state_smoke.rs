@@ -24,14 +24,12 @@
 //! ```
 //!
 //! Tests:
-//! - `app_state_clone_shares_store`        — Store is `Arc`'d; clone is cheap
-//!                                            (verified by behavioural identity,
-//!                                            not by raw timing — timing-based
-//!                                            cheapness asserts are flaky on CI)
+//! - `app_state_clone_shares_store` — Store is `Arc`'d; clone is cheap
+//!   (verified by behavioural identity, not by raw timing — timing-based
+//!   cheapness asserts are flaky on CI)
 //! - `app_state_started_at_is_in_the_past` — `started_at` is captured at
-//!                                            construction (must precede a
-//!                                            later `OffsetDateTime::now_utc()`)
-//! - `app_state_project_root_matches_input`— public field returns the input
+//!   construction (must precede a later `OffsetDateTime::now_utc()`)
+//! - `app_state_project_root_matches_input` — public field returns the input
 //! - `app_state_router_handle_is_optional` — `None` is accepted by `new`
 
 mod common;

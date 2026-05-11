@@ -17,7 +17,7 @@
 //! Axum needs to hand a copy to each request future, and the underlying
 //! [`studio_store::Store`] is `Arc`-shared internally.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use studio_router::Router;
@@ -78,5 +78,31 @@ impl AppState {
         let now = OffsetDateTime::now_utc();
         let delta = now - self.started_at;
         u64::try_from(delta.whole_seconds()).unwrap_or(0)
+    }
+
+    /// Borrow the persistence layer.
+    #[must_use]
+    pub fn store(&self) -> &Store {
+        &self.store
+    }
+
+    /// Borrow the optional dispatch router. Returns `None` until Wave A4/A5
+    /// wires the construction.
+    #[must_use]
+    pub fn router(&self) -> Option<&Arc<Router>> {
+        self.router.as_ref()
+    }
+
+    /// Borrow the absolute project root the server was started against.
+    #[must_use]
+    pub fn project_root(&self) -> &Path {
+        &self.project_root
+    }
+
+    /// Server-start timestamp (UTC). Used to derive `uptime_seconds` and as
+    /// a `last_modified`-style hint for future health-detail responses.
+    #[must_use]
+    pub fn started_at(&self) -> OffsetDateTime {
+        self.started_at
     }
 }
