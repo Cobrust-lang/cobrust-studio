@@ -27,3 +27,19 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+# A3 P7-TEST dev-deps — added by Wave A3 test corpus (feature/a3-test-server-smoke).
+# DEV (parallel worktree feature/a3-dev-server-skel) will add the runtime deps
+# (axum, tower, time, etc.) on its own branch; merge reconciles.
+[dev-dependencies]
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread", "fs", "io-util", "sync", "time", "net"] }
+tempfile.workspace = true
+serde_json.workspace = true
+# axum + tower + http are the canonical Axum integration-test trio. We exercise
+# the Router built by `studio_server::build_router` via `tower::ServiceExt::oneshot`
+# so no TCP bind / port allocation / `net`-feature dance is required in tests.
+axum = { version = "0.8", default-features = false, features = ["json", "tokio", "http1", "matched-path", "original-uri", "query"] }
+tower = { version = "0.5", features = ["util"] }
+http = "1"
+http-body-util = "0.1"
+time = { version = "0.3", features = ["formatting", "macros", "serde-well-known"] }
