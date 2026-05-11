@@ -1,3 +1,14 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::too_many_arguments,
+    clippy::case_sensitive_file_extension_comparisons,
+    clippy::collapsible_if,
+    clippy::redundant_closure_for_method_calls,
+    clippy::used_underscore_items,
+    clippy::used_underscore_binding,
+    clippy::missing_panics_doc
+)]
+
 //! Shared test helpers for the studio-store integration corpus (Wave A2).
 //!
 //! Per ADR-0004 Studio's root layout has:

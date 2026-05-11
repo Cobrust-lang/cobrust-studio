@@ -1,3 +1,14 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::too_many_arguments,
+    clippy::case_sensitive_file_extension_comparisons,
+    clippy::collapsible_if,
+    clippy::redundant_closure_for_method_calls,
+    clippy::used_underscore_items,
+    clippy::used_underscore_binding,
+    clippy::missing_panics_doc
+)]
+
 //! Filesystem watcher smoke — Wave A2 TDD red.
 //!
 //! Contract per `docs/agent/modules/studio-store.md` §"Public surface":
