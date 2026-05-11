@@ -24,3 +24,4 @@ the same atomic commit as the change it justifies.
 | [0003](0003-auth-endpoint-first.md) | Auth: custom-endpoint-first, OAuth deferred to M5 | accepted | 2026-05-11 |
 | [0004](0004-storage-sqlite-filesystem.md) | Storage: SQLite + filesystem markdown for ADRs/findings | accepted | 2026-05-11 |
 | [0005](0005-runner-router-lift.md) | Agent runner: lift cobrust-llm-router as studio-router | accepted | 2026-05-11 |
+| [0006](0006-studio-router-api-and-lift-provenance.md) | studio-router public API surface + lift provenance pin | accepted | 2026-05-11 |
