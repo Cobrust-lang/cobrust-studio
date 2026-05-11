@@ -6,14 +6,29 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+description = "Cobrust Studio LLM router — provider-agnostic dispatch, BLAKE3 cache, JSONL ledger. Forked from cobrust-llm-router @ 61f2aff per ADR-0005/0006."
 
 [lints]
 workspace = true
 
 [dependencies]
+async-trait.workspace = true
+blake3.workspace = true
+futures.workspace = true
+hex.workspace = true
+rand.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-async-trait.workspace = true
+time.workspace = true
 tokio.workspace = true
+toml.workspace = true
 tracing.workspace = true
+unicode-normalization.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "fs", "io-util", "sync"] }
+wiremock.workspace = true
