@@ -266,7 +266,11 @@ impl std::fmt::Debug for EndpointSecret {
 }
 
 /// Errors from the secret-storage module (ADR-0007 §"Decision").
+///
+/// `#[non_exhaustive]` so future variants (e.g. when v2+ scheme support
+/// lands) don't break downstream `match` arms — Aleksandr v3 audit P3 #5.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum SecretError {
     /// Argon2id key-derivation failure.
     #[error("argon2id key derivation failed: {0}")]
@@ -290,6 +294,19 @@ pub enum SecretError {
     },
 
     /// Scheme tag is not recognised by this version of Studio.
+    /// Reserved for the future scheme-guard at the `EncryptedBlob` boundary.
+    ///
+    /// **Currently not produced by any function in this module.** The login
+    /// handler in `routes/login.rs` performs `blob.scheme == SCHEME` checks
+    /// inline and falls through to either the existing-blob path or fresh-
+    /// login overwrite. When v2+ schemes land (future Argon2id parameter
+    /// rev, or a chacha20poly1305 variant), the scheme-discriminator logic
+    /// moves here as `EndpointSecret::validate_scheme(&str) -> Result<...,
+    /// SecretError::UnknownScheme>` and login.rs delegates to it. Keeping
+    /// the variant reserved now means that addition is non-breaking for
+    /// downstream `match` arms (also why this enum is `#[non_exhaustive]`
+    /// — Aleksandr v3 audit P3 #5).
+    #[allow(dead_code)] // Reserved-for-future-scheme-guard — see doc above.
     #[error("unknown scheme: {0}")]
     UnknownScheme(String),
 }

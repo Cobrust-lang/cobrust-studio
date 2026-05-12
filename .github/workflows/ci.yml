@@ -118,10 +118,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.94.1
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-audit --locked
-      - run: cargo audit --deny warnings || true
-        # Soft-warn for M5 maturity: any reported advisory shows in the
-        # job log but does not fail the build yet. Tighten to hard-fail
-        # once the workspace's transitive deps are RustSec-clean.
+      # Hard-fail on any NEW advisory (Aleksandr v3 P3 #4 — upgraded from
+      # `|| true` soft-warn now that the workspace's known false-positive
+      # is explicitly ignored).
+      #
+      # RUSTSEC-2023-0071 (Marvin Attack on `rsa 0.9.x`): pulled transitively
+      # via `sqlx-mysql 0.8.6`, an unconditional dep of `sqlx 0.8.x`. Studio
+      # uses sqlx only with the `sqlite` feature — the MySQL path compiles
+      # but never reaches runtime. Re-evaluate when `sqlx 0.9` ships
+      # (currently 0.9.0-alpha.1).
+      - run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071
 
   # ─── Hermetic Playwright (post-build artifact) ───────────────────
   #
