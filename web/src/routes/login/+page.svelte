@@ -132,6 +132,13 @@
 							autocomplete="off"
 							class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none"
 						/>
+						<span class="text-[0.65rem] text-muted-foreground/80 leading-snug">
+							Examples — Anthropic: <code class="font-mono">https://api.anthropic.com</code>
+							(no <code>/v1</code>) · OpenAI: <code class="font-mono">https://api.openai.com/v1</code>
+							· local vLLM/Ollama: <code class="font-mono">http://127.0.0.1:8000/v1</code>.
+							Studio appends the provider-specific suffix (Anthropic <code>/v1/messages</code>,
+							OpenAI <code>/chat/completions</code>) automatically.
+						</span>
 					</label>
 					<label class="flex flex-col gap-1 text-sm">
 						<span class="text-xs text-muted-foreground">API key</span>
