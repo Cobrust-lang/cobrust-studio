@@ -1,5 +1,5 @@
 /**
- * /finding — Finding list + detail + create (Wave M2 TEST Layer 2).
+ * /finding — Finding list + detail + create (Wave M3 hermetic).
  *
  * Symmetric to /adr but with severity + status badges. The M1 server
  * contract does not expose `GET /api/finding/:id` (per the page
@@ -14,12 +14,12 @@
  * 3. Create flow POSTs `/api/finding` with the flat FindingDraft and
  *    refreshes the list.
  *
- * TODO M2.1: hermetic backend; for now relies on the same tempdir
- * harness as `adr.spec.ts`.
+ * Backed by the same hermetic harness as `adr.spec.ts` (tempdir + spawn
+ * — see `_setup.ts`).
  */
-import { skipUnlessE2E, test, expect } from './_fixtures';
+import { skipIfHarnessDisabled, test, expect } from './_fixtures';
 
-test.beforeEach(() => skipUnlessE2E());
+test.beforeEach(() => skipIfHarnessDisabled());
 
 test('empty state shows "No findings yet."', async ({ page }) => {
 	await page.goto('/finding');

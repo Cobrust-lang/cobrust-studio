@@ -1,10 +1,9 @@
 /**
- * /login — endpoint configuration flow (Wave M2 TEST Layer 2).
+ * /login — endpoint configuration flow (Wave M3 hermetic).
  *
- * Pre-requisites (`STUDIO_E2E=1`):
- * - `cobrust-studio serve --project <tempdir> --port 7878` running.
- * - SvelteKit preview on http://localhost:4173 (handled by Playwright
- *   `webServer` in `playwright.config.ts`).
+ * Runs against the live `cobrust-studio` spawned by `_setup.ts` (the
+ * M3 hermetic harness). No manual backend setup required; the binary
+ * embeds the SvelteKit SPA so the page navigations resolve same-origin.
  *
  * Pinned UX contract:
  * 1. Three inputs (Base URL / API key / Model) and a "Save endpoint"
@@ -14,13 +13,10 @@
  *    `EncryptedBlob` triple and redirects to `/adr` after the
  *    400ms success toast.
  * 4. Server failure surfaces the `{code}: {message}` toast verbatim.
- *
- * TODO M2.1: spawn studio-server inside the harness so the spec is
- * hermetic. Until then `STUDIO_E2E=1` requires a manually-run backend.
  */
-import { skipUnlessE2E, test, expect } from './_fixtures';
+import { skipIfHarnessDisabled, test, expect } from './_fixtures';
 
-test.beforeEach(() => skipUnlessE2E());
+test.beforeEach(() => skipIfHarnessDisabled());
 
 test('login form validates required fields before POSTing', async ({ page }) => {
 	await page.goto('/login');

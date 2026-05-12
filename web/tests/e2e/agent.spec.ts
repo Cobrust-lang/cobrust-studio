@@ -1,5 +1,5 @@
 /**
- * /agent — dispatch composer + SSE live stream (Wave M2 TEST Layer 2).
+ * /agent — dispatch composer + SSE live stream (Wave M3 hermetic).
  *
  * Two universes:
  *
@@ -12,20 +12,18 @@
  *      appends each chunk to the transcript and renders a usage badge
  *      from the done payload.
  *
- * Both universes are exercised here, gated by env:
+ * The M3 hermetic harness (`_setup.ts`) writes `studio.toml` with a
+ * synthetic provider when `STUDIO_E2E_ROUTER=1`, so the universe
+ * switch is fully automatic now:
  *
- *   STUDIO_E2E=1            → universe A by default
- *   STUDIO_E2E_ROUTER=1     → universe B (test fixture provides
- *                             studio.toml with a synthetic provider)
- *
- * TODO M2.1: write the `studio.toml` from the harness so the spec
- * doesn't need an out-of-band setup step.
+ *   default                  → universe A (router=None)
+ *   STUDIO_E2E_ROUTER=1      → universe B (synthetic provider)
  */
-import { skipUnlessE2E, test, expect } from './_fixtures';
+import { skipIfHarnessDisabled, test, expect } from './_fixtures';
 
 const ROUTER_ENABLED = process.env.STUDIO_E2E_ROUTER === '1';
 
-test.beforeEach(() => skipUnlessE2E());
+test.beforeEach(() => skipIfHarnessDisabled());
 
 test('router = None → page shows the "Configure LLM endpoint" CTA', async ({ page }) => {
 	test.skip(ROUTER_ENABLED, 'router-on universe — see the next test');

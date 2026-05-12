@@ -1,5 +1,10 @@
 /**
- * /adr — ADR list + detail + create (Wave M2 TEST Layer 2).
+ * /adr — ADR list + detail + create (Wave M3 hermetic).
+ *
+ * Runs against the spawned `cobrust-studio` whose project root is a
+ * fresh tempdir (see `_setup.ts`). The tempdir guarantees an empty
+ * `docs/agent/adr/` at session start, so the empty-state assertion is
+ * deterministic.
  *
  * Pinned UX contract:
  * 1. Empty state shows "No ADRs yet." in the table body.
@@ -11,14 +16,10 @@
  * 5. Clicking a row opens the detail modal with the rendered body
  *    inside a <pre> element (markdown is shown as raw text, per the
  *    A5-reconcile contract).
- *
- * TODO M2.1: spawn studio-server inside a tempdir + reset state
- * between tests so this spec is hermetic. Right now it assumes an
- * empty `<tempdir>/docs/agent/adr/` at the start.
  */
-import { skipUnlessE2E, test, expect } from './_fixtures';
+import { skipIfHarnessDisabled, test, expect } from './_fixtures';
 
-test.beforeEach(() => skipUnlessE2E());
+test.beforeEach(() => skipIfHarnessDisabled());
 
 test('empty state shows "No ADRs yet."', async ({ page }) => {
 	await page.goto('/adr');

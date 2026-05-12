@@ -13,7 +13,8 @@
 		"format": "prettier --write .",
 		"test:unit": "svelte-kit sync && vitest run",
 		"test:unit:watch": "svelte-kit sync && vitest",
-		"test:e2e": "playwright test",
+		"test:e2e": "playwright test --project=hermetic",
+		"test:e2e:dogfood": "playwright test --config=playwright-dogfood.config.ts",
 		"test:e2e:setup": "playwright install --with-deps chromium"
 	},
 	"devDependencies": {
