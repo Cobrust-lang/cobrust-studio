@@ -87,9 +87,17 @@ impl FindingSummary {
 }
 
 /// Full finding — summary + body.
+///
+/// **Wire shape note (A5 reconcile):** the `summary` field carries
+/// `#[serde(flatten)]` so that JSON serialisation surfaces the summary
+/// fields (`finding_id`, `title`, `status`, `severity`, `date`, `path`)
+/// at the top level — see [`crate::Adr`] for the same convention. The
+/// M1 wire contract in `crates/studio-server/tests/finding_routes.rs`
+/// expects `finding_id` at the top level of the response body.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Finding {
-    /// Embedded summary fields.
+    /// Embedded summary fields, flattened on the wire.
+    #[serde(flatten)]
     pub summary: FindingSummary,
     /// Markdown body after the closing `---` fence.
     pub body: String,

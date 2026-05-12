@@ -56,11 +56,23 @@ pub fn router() -> Router<AppState> {
 }
 
 /// Handler for `GET /api/ledger/recent`.
+///
+/// `?n=` semantics (per A5 reconcile, mirroring the M1 contract in
+/// `tests/ledger_route.rs`):
+/// - Omitted → [`LEDGER_DEFAULT_N`] (20).
+/// - `?n=0`  → empty list (degenerate but well-defined; SQLite `LIMIT 0`
+///   short-circuits and the store contract in
+///   `studio_store::ledger::LedgerHandle::recent` already returns `[]`).
+/// - `?n=N`  → clamped to `min(N, LEDGER_MAX_N)` (cap stays in force).
 pub async fn recent(
     State(state): State<AppState>,
     Query(q): Query<RecentQuery>,
 ) -> Result<Response, RouteError> {
-    let n = q.n.unwrap_or(LEDGER_DEFAULT_N).clamp(1, LEDGER_MAX_N);
+    let n = match q.n {
+        Some(0) => 0,
+        Some(n) => n.min(LEDGER_MAX_N),
+        None => LEDGER_DEFAULT_N,
+    };
     let entries = state.store().ledger().recent(n).await?;
     Ok(Json(LedgerRecentResponse { entries }).into_response())
 }

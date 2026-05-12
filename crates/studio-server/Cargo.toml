@@ -21,6 +21,9 @@ path = "src/lib.rs"
 [dependencies]
 studio-store = { path = "../studio-store" }
 studio-router = { path = "../studio-router" }
+# A5: async-trait needed for `impl LlmProvider for SyntheticProvider`
+# (the studio-router trait carries `#[async_trait::async_trait]`).
+async-trait.workspace = true
 axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true
@@ -49,3 +52,9 @@ http-body-util = "0.1"
 # remain in scope for integration tests without a dev-dep re-listing.
 futures.workspace = true
 base64 = "0.22"
+# A5 TEST corpus: in-test synthetic LlmProvider double impls `LlmProvider`
+# via `#[async_trait::async_trait]`. `async-trait` is a workspace dep
+# already used by `studio-router`; re-list here so the test file resolves
+# the proc-macro without depending on the router crate's transitively-
+# exposed copy (unstable across edition bumps).
+async-trait.workspace = true

@@ -25,6 +25,7 @@
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
+use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
@@ -63,10 +64,22 @@ pub fn router() -> Router<AppState> {
 }
 
 /// Handler for `POST /api/auth/set-endpoint`.
+///
+/// Body extracted via `Result<Json<_>, JsonRejection>` so malformed bodies
+/// (missing fields, wrong content-type, garbage JSON) surface as
+/// `{ error, code: "invalid_body" }` JSON instead of axum's default
+/// `text/plain` 4xx (per A5 reconcile, parallel to
+/// [`super::adr::create_adr`]).
 pub async fn set_endpoint(
     State(state): State<AppState>,
-    Json(req): Json<SetEndpointRequest>,
+    payload: Result<Json<SetEndpointRequest>, JsonRejection>,
 ) -> Result<Response, RouteError> {
+    let Json(req) = payload.map_err(|e| {
+        // Every JSON-extractor rejection collapses to `invalid_body` —
+        // see [`super::adr::create_adr`].
+        let _ = e.status();
+        RouteError::bad_request(e.body_text(), "invalid_body")
+    })?;
     if req.scheme.trim().is_empty() {
         return Err(RouteError::bad_request(
             "scheme must be non-empty",

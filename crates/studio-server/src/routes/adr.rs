@@ -16,6 +16,7 @@
 //! already_exists`; SQL/IO failures as `500 internal_error`. See
 //! [`crate::RouteError`] for the full mapping.
 
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -113,10 +114,27 @@ pub async fn get_adr(
 }
 
 /// Handler for `POST /api/adr`. Returns `201 Created`.
+///
+/// The body is extracted via `Result<Json<_>, JsonRejection>` so deserialisation
+/// failures (missing required field, wrong content-type, malformed JSON, etc.)
+/// are converted into the uniform `RouteError` envelope with
+/// `code: "invalid_body"`, rather than falling through to axum's default
+/// `text/plain` 400 — which violated the M1 contract documented in
+/// `tests/adr_routes.rs` §"Error envelope" (per A5 reconcile).
 pub async fn create_adr(
     State(state): State<AppState>,
-    Json(body): Json<AdrDraftBody>,
+    payload: Result<Json<AdrDraftBody>, JsonRejection>,
 ) -> Result<Response, RouteError> {
+    let Json(body) = payload.map_err(|e| {
+        // Every JSON-extractor rejection (missing field, wrong
+        // content-type, garbage JSON) collapses onto a single
+        // `invalid_body` code so the M2 frontend can handle one error
+        // banner. axum's underlying HTTP status (400 / 415 / 422) is
+        // overridden by `RouteError::bad_request` → 400 deliberately —
+        // see the M1 wire contract in `tests/adr_routes.rs`.
+        let _ = e.status();
+        RouteError::bad_request(e.body_text(), "invalid_body")
+    })?;
     if body.title.trim().is_empty() {
         return Err(RouteError::bad_request(
             "title must be non-empty",
