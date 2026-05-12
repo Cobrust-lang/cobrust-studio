@@ -4,6 +4,28 @@ All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-05-12
+
+**Release infrastructure patch.** v0.2.0 shipped 4 of 5 platform tarballs
+because the GitHub-hosted `macos-13` (Intel) runner queue stalled the
+`x86_64-apple-darwin` build for 30+ minutes — the same pattern Sarah v3
+had explicitly flagged ("if this stalls again, consider whether the
+cross-compile setup needs to change"). This release switches that
+build to cross-compile from `macos-14` (Apple Silicon) using
+`--target=x86_64-apple-darwin`. Rust + Apple clang natively support
+this; the only change is the runner label. No code changes.
+
+### Changed
+
+- **`.github/workflows/release.yml`** — `x86_64-apple-darwin` build
+  matrix entry now uses `runner: macos-14` (with the existing
+  `--target=x86_64-apple-darwin` flag triggering cross-compile) instead
+  of `runner: macos-13`. Eliminates the GitHub-hosted Intel macOS
+  runner-queue dependency that blocked v0.1.3 + v0.2.0 from achieving
+  5-platform green-first-time. **This is the Sarah v2 pilot-gate #3
+  validation tag** — if v0.2.1's release.yml ships all 5 tarballs
+  without further runner-queue stalls, the gate closes.
+
 ## [0.2.0] — 2026-05-12
 
 **M6 AEAD round-trip release.** The `/login → dispatch` flow is end-to-end:

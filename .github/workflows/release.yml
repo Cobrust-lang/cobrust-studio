@@ -20,8 +20,17 @@ jobs:
             runner: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
+          # x86_64-apple-darwin cross-compiles from the arm64 runner:
+          # GitHub-hosted macos-13 (Intel) is severely queue-starved
+          # (often 30+ min stall on the Cobrust-lang org tier; the
+          # v0.1.3 + v0.2.0 tags both hit this). Rust + Apple clang
+          # both natively support cross from Apple Silicon to Intel,
+          # so build on macos-14 with --target=x86_64-apple-darwin
+          # instead. Saves runner pool pressure and unblocks 5-platform
+          # first-time green (Sarah v2 pilot-gate #3 + Sarah v3
+          # audit recommendation).
           - target: x86_64-apple-darwin
-            runner: macos-13
+            runner: macos-14
           - target: aarch64-apple-darwin
             runner: macos-14
           - target: x86_64-pc-windows-msvc
