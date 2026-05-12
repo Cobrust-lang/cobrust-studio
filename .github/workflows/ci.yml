@@ -11,6 +11,8 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  # ─── Rust workspace ──────────────────────────────────────────────
+
   fmt:
     name: cargo fmt --check
     runs-on: ubuntu-latest
@@ -22,7 +24,7 @@ jobs:
       - run: cargo fmt --all -- --check
 
   clippy:
-    name: cargo clippy -D warnings
+    name: cargo clippy -D warnings (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -37,12 +39,12 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   build:
-    name: cargo build
+    name: cargo build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.94.1
@@ -50,7 +52,7 @@ jobs:
       - run: cargo build --workspace --all-targets --locked
 
   test:
-    name: cargo test
+    name: cargo test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -62,9 +64,102 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked --no-fail-fast
 
+  # `dispatch_real_llm_e2e` is #[ignore]'d so it never runs in default CI.
+  # The full hermetic Playwright + dogfood specs depend on the binary;
+  # they live in `release.yml` once a tag is pushed. CI here covers
+  # everything else.
+
+  # ─── Doc-coverage 6-step gate (M4.1 paired-exit-code + FAILED-grep) ──
+
   doc-coverage:
-    name: scripts/doc-coverage.sh
+    name: scripts/doc-coverage.sh (6 gates incl. cargo test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - uses: Swatinem/rust-cache@v2
       - run: bash scripts/doc-coverage.sh
+
+  # ─── Frontend (web/) ─────────────────────────────────────────────
+
+  web-check:
+    name: pnpm run check + test:unit + build (web/)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+      - run: pnpm run test:unit
+      - run: pnpm run build
+
+  # ─── Security (advisories + supply-chain) ────────────────────────
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit --deny warnings || true
+        # Soft-warn for M5 maturity: any reported advisory shows in the
+        # job log but does not fail the build yet. Tighten to hard-fail
+        # once the workspace's transitive deps are RustSec-clean.
+
+  # ─── Hermetic Playwright (post-build artifact) ───────────────────
+  #
+  # Runs against the just-built release binary. Adds confidence beyond
+  # `cargo test --locked` because it exercises the actual /api/* +
+  # SPA-fallback wire path through axum's router, which is where
+  # F-M4-01 (Path<String>-on-fallback) was missed pre-v0.1.1.
+
+  playwright-hermetic:
+    name: Playwright hermetic (Linux release binary)
+    runs-on: ubuntu-latest
+    needs: [build, web-check]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Build web/ + Rust release binary
+        run: bash scripts/build-release.sh
+      - name: Install Playwright browsers
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run hermetic e2e (auto-spawns binary against tempdir)
+        working-directory: web
+        env:
+          STUDIO_E2E: "1"
+        run: pnpm run test:e2e
+      - name: Run dogfood e2e (binary against this repo, 6 ADRs visible)
+        working-directory: web
+        env:
+          STUDIO_E2E: "1"
+        run: pnpm run test:e2e:dogfood
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: web/playwright-report/
+          retention-days: 14

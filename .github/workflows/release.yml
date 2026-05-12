@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write  # required for `gh release create`
+
+jobs:
+  build-and-upload:
+    name: Build + upload (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            runner: macos-13
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      # Build the web bundle once per target — rust-embed at compile time
+      # bakes the result into the Rust binary.
+      - name: Build web bundle
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Build release binary
+        run: cargo build --release --workspace --locked --target ${{ matrix.target }}
+
+      - name: Stage tarball (unix)
+        if: matrix.target != 'x86_64-pc-windows-msvc'
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          STAGE="cobrust-studio-v${VERSION}-${{ matrix.target }}"
+          mkdir -p "dist/${STAGE}"
+          cp "target/${{ matrix.target }}/release/cobrust-studio" "dist/${STAGE}/cobrust-studio"
+          cp README.md CHANGELOG.md LICENSE-APACHE LICENSE-MIT "dist/${STAGE}/"
+          cd dist
+          tar czf "${STAGE}.tar.gz" "${STAGE}"
+          shasum -a 256 "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"
+          ls -lh
+
+      - name: Stage zip (windows)
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          $version = "${env:GITHUB_REF}".Replace("refs/tags/v", "")
+          $stage = "cobrust-studio-v${version}-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path "dist/${stage}" -Force | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/cobrust-studio.exe" "dist/${stage}/"
+          Copy-Item README.md, CHANGELOG.md, LICENSE-APACHE, LICENSE-MIT "dist/${stage}/"
+          Compress-Archive -Path "dist/${stage}" -DestinationPath "dist/${stage}.zip"
+          $hash = (Get-FileHash "dist/${stage}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${stage}.zip" | Out-File -Encoding utf8 "dist/${stage}.zip.sha256"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/cobrust-studio-v*-${{ matrix.target }}.tar.gz
+            dist/cobrust-studio-v*-${{ matrix.target }}.tar.gz.sha256
+            dist/cobrust-studio-v*-${{ matrix.target }}.zip
+            dist/cobrust-studio-v*-${{ matrix.target }}.zip.sha256
+          fail_on_unmatched_files: false
+          generate_release_notes: false
+          # If the release was created manually (e.g. via `gh release create`)
+          # before the tag push, this action attaches assets to it.
