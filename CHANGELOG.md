@@ -16,6 +16,29 @@ All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepac
   Env-var resolution path is retained as the `--dev-api-key` CLI
   escape hatch for hermetic tests + headless flows; README posture
   changes to make `/login` the canonical primary flow.
+- **`Store::close() -> async ()`** — explicit SqlitePool shutdown
+  for tests that unlink the db file. No-op on Unix (where unlink
+  semantics allow open-file delete); mandatory on Windows-CI.
+- **`crates/studio-server/tests/secret_roundtrip.rs`** — Phase 2 P9
+  dispatch test target (3 `#[ignore]`-attributed integration tests
+  naming the M6 round-trip success criteria from ADR-0007).
+
+### Fixed
+
+- **Windows-CI cargo test reliability** — two bugs the new
+  `windows-latest` matrix surfaced on first run:
+  - `studio-store cold_start_index_rebuild` panicked at
+    `fs::remove_file` with NT error 32 ("file in use by another
+    process") because sqlx pool shutdown is async; `Drop` alone
+    does not await it. Fixed by calling `Store::close().await`
+    before the unlink in the two affected tests.
+  - `studio-server dispatch_synthetic_route` panicked at
+    `RouterConfig::from_toml_str` because Windows tempdir paths
+    contain backslashes that TOML `"..."` strings interpret as
+    escape sequences. Fixed by normalizing to forward-slash via
+    `.to_string_lossy().replace('\\', "/")` before interpolation.
+  Both fixes target Sarah v2 pilot-gate #3 ("v0.1.4+ ships all 5
+  platforms green-first-time").
 
 ## [0.1.3] — 2026-05-12
 
