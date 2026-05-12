@@ -2,6 +2,21 @@
 
 All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **ADR-0007 — secret-storage AEAD round-trip (M6, Phase 1 spike)**:
+  Binding design for the `/login → dispatch` round-trip closure.
+  Picks AES-256-GCM + Argon2id (m=64MiB / t=3 / p=1) with packed
+  `salt ‖ nonce ‖ ciphertext` wire format under
+  `scheme="aes-gcm-256/argon2id-v1"`. Closes Sarah persona v2's
+  pilot-gate #2 ("AEAD round-trip ships, env-var workaround
+  removed") at the design layer; Phase 2 P9 dispatch implements.
+  Env-var resolution path is retained as the `--dev-api-key` CLI
+  escape hatch for hermetic tests + headless flows; README posture
+  changes to make `/login` the canonical primary flow.
+
 ## [0.1.3] — 2026-05-12
 
 **M5 polish cycle — persona-audit-driven improvements + first multi-platform
