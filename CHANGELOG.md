@@ -2,6 +2,57 @@
 
 All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — 2026-05-12
+
+**Patch release fixing a critical SPA-routing bug shipped in v0.1.0.**
+
+### Fixed
+
+- **F-M4-01 (P0)** — `embed::serve_asset` fallback handler used
+  `axum::extract::Path<String>` which does not work on routes
+  mounted via `Router::fallback(...)`. Every SPA client-side route
+  (`/login`, `/adr`, `/agent`, `/finding`, `/ledger`) returned the
+  Axum error string "Wrong number of path arguments for `Path`" as
+  the response body instead of the SvelteKit `index.html` shell.
+  Replaced with `axum::http::Uri` extractor — see finding
+  `m4-release-readiness-spa-fallback-extractor.md`. Locked against
+  regression by `serve_asset_handles_spa_routes_login_agent_etc`
+  unit test.
+
+### Caught by
+
+CTO 守闸 M4 release-readiness audit (hermetic Playwright harness +
+direct binary probe). The audit caught the regression that
+`scripts/smoke-dogfood.sh` (only probes `GET /` and `GET /api/*`)
+and the embed.rs collocated unit test (called `serve_asset` directly
+without going through the Axum router) both missed. F19 release-
+readiness mandate validated: clean-shell execution by an
+independent caller — Playwright in this case — catches what intent-
+driven self-checks miss.
+
+### Known limitations (carried from v0.1.0)
+
+- WebCrypto m2-stub login blob still not server-decrypted; set
+  `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` env var before launching
+  the binary for working `/api/dispatch`.
+- Only `arm64-apple-darwin` tarball; linux x86_64 + linux aarch64
+  pending CI matrix.
+- 2 of 14 hermetic Playwright e2e specs still fail (finding modal
+  text-matcher drift); tracked for v0.1.2.
+
+### Upgrade
+
+`v0.1.0` is **known-broken** for SPA navigation. All users should
+upgrade:
+
+```bash
+git fetch origin && git checkout v0.1.1
+bash scripts/build-release.sh
+```
+
+The router public surface is unchanged. The fix is server-side
+only.
+
 ## [0.1.0] — 2026-05-12
 
 Initial release. Methodology-as-a-service productizing the Cobrust ADR

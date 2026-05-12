@@ -26,8 +26,7 @@
 //! them as nested routers above the [`Router::fallback`] hook in
 //! [`crate::app::build_router`].
 
-use axum::extract::Path;
-use axum::http::{StatusCode, header};
+use axum::http::{StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use rust_embed::RustEmbed;
 
@@ -55,8 +54,16 @@ pub struct WebAssets;
 /// every `/api/*` nested router *before* this fallback, so this
 /// handler only sees web-asset paths (root, `/adr/3`, `/agent`, …) and
 /// the SvelteKit-generated asset paths under `_app/`.
-pub async fn serve_asset(Path(path): Path<String>) -> Response {
-    serve_path(&path)
+///
+/// Uses [`axum::http::Uri`] extractor (the request's raw URI) rather
+/// than [`axum::extract::Path`] — `Path<T>` extracts named parameters
+/// from a matched route pattern, and `Router::fallback` has no pattern
+/// to match against. Past M4 release-readiness audit caught this as
+/// an F19 regression: pre-fix, every SPA route (`/login`, `/adr`,
+/// `/agent`, …) returned the Axum "Wrong number of path arguments"
+/// error string instead of `index.html`.
+pub async fn serve_asset(uri: Uri) -> Response {
+    serve_path(uri.path())
 }
 
 /// Axum handler bound to `GET /`: serves the SPA shell
@@ -164,12 +171,32 @@ mod tests {
 
     #[tokio::test]
     async fn serve_asset_falls_back_to_index_for_unknown_path() {
-        // Path "adr/3" is a SvelteKit client-side route that will only
-        // exist as a real embedded file in release builds with prerendered
-        // routes. In dev mode (web/build/ empty) the dev stub answers;
-        // in release mode index.html answers. Either way, status is 200.
-        let resp = serve_asset(Path("adr/3".to_string())).await;
+        // SvelteKit client-side route. Pre-M4.2 fix this used
+        // `Path<String>` extractor which fails on fallback handlers —
+        // the F19 audit caught the regression. Post-fix, the `Uri`
+        // extractor takes any URI and serves index.html for SPA
+        // routes. Status is 200 either way (real index.html in
+        // release; dev stub if web/build/ unpopulated).
+        let uri: Uri = "/adr/3".parse().expect("valid uri");
+        let resp = serve_asset(uri).await;
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn serve_asset_handles_spa_routes_login_agent_etc() {
+        // The exact set the M3 review forecast "should pass" but M4
+        // release-readiness audit caught as 13/14 Playwright fails.
+        // Lock the regression here so a future change to the fallback
+        // handler can't reintroduce the bug.
+        for path in ["/login", "/adr", "/agent", "/finding", "/ledger"] {
+            let uri: Uri = path.parse().expect("valid uri");
+            let resp = serve_asset(uri.clone()).await;
+            assert_eq!(
+                resp.status(),
+                StatusCode::OK,
+                "SPA route {path:?} should return 200 (index.html shell), not 404 or 5xx",
+            );
+        }
     }
 
     #[test]
