@@ -36,11 +36,13 @@
 //! correlate by tag.
 
 use std::convert::Infallible;
+use std::sync::Arc;
 
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
+use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
@@ -48,12 +50,13 @@ use futures::StreamExt;
 use futures::stream::{self, Stream};
 use serde::{Deserialize, Serialize};
 use studio_router::{
-    CompletionRequest, DispatchResponse, LlmError, Message, Role, RouterError, SamplingParams,
-    TokenUsage,
+    AnthropicProvider, CompletionRequest, DispatchResponse, LlmError, LlmProvider, Message, Role,
+    RouterBuilder, RouterConfig, RouterError, SamplingParams, TokenUsage,
 };
 
 use crate::AppState;
 use crate::error::RouteError;
+use crate::secret::SecretError;
 use crate::state::DispatchContext;
 
 /// Body shape for `POST /api/dispatch`. Mirrors
@@ -123,9 +126,133 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/", post(dispatch_sse))
 }
 
+/// Resolve the dispatch router for a single request.
+///
+/// Priority (ADR-0007 §"Dispatch integration"):
+///
+/// 1. If `AppState.session_key` is `Some(key)` **and** `session_kv` has a
+///    blob, decrypt the blob and construct an `AnthropicProvider` from the
+///    plaintext `EndpointSecret`. Wrap in a synthetic-fallback `Router` so
+///    tests can override per-call. Returns the per-request router.
+///
+/// 2. If `AppState.router` is `Some(r)` (statically built from `studio.toml`
+///    at boot), use it as-is.
+///
+/// 3. Otherwise: no authenticated session + no static router → 503 (or 401
+///    when a session_key slot exists but is empty).
+///
+/// Returns `Ok(router)` on success or an HTTP [`Response`] to return immediately.
+async fn resolve_router(state: &AppState) -> Result<Arc<studio_router::Router>, Response> {
+    // Try the session-key path first (ADR-0007 primary path).
+    let key = {
+        let guard = state.session_key.read().await;
+        guard.clone()
+    };
+
+    if let Some(key) = key {
+        // We have a session key — try to decrypt the blob and build a provider.
+        let blob = state.store.session().get_endpoint().await.map_err(|e| {
+            tracing::error!(error = %e, "dispatch: failed to read session_kv");
+            RouteError::internal(e.to_string()).into_response()
+        })?;
+
+        let blob = blob.ok_or_else(|| {
+            tracing::warn!("dispatch: session key present but no session_kv blob");
+            let body = serde_json::json!({
+                "error": "no endpoint configured",
+                "code": "no_endpoint_configured"
+            });
+            (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
+        })?;
+
+        let secret = key.open(&blob.ciphertext).map_err(|e| {
+            tracing::warn!(error = %e, "dispatch: failed to decrypt session_kv blob");
+            match e {
+                SecretError::Open(_) => {
+                    let body = serde_json::json!({
+                        "error": "session key does not match stored blob",
+                        "code": "session_decrypt_failed"
+                    });
+                    (StatusCode::UNAUTHORIZED, Json(body)).into_response()
+                }
+                _ => RouteError::internal(e.to_string()).into_response(),
+            }
+        })?;
+
+        // Build a per-request router with the decrypted AnthropicProvider.
+        // Per ADR-0007: "The provider is constructed per-dispatch (no pooling)".
+        let provider: Arc<dyn LlmProvider> =
+            match AnthropicProvider::new("session_provider", &secret.endpoint, &secret.api_key) {
+                Ok(p) => Arc::new(p),
+                Err(e) => {
+                    tracing::error!(error = %e, "dispatch: failed to construct AnthropicProvider");
+                    return Err(RouteError::internal(e.to_string()).into_response());
+                }
+            };
+
+        // Minimal RouterConfig pointing at the decrypted model.
+        let model_tag = format!("session_provider:{}", secret.model);
+        let toml = format!(
+            r#"
+[router]
+strategy = "quality"
+preferred = ["{model_tag}"]
+
+[providers.session_provider]
+kind = "anthropic"
+base_url = "{endpoint}"
+api_key_env = ""
+models = ["{model}"]
+"#,
+            model_tag = model_tag,
+            endpoint = secret.endpoint,
+            model = secret.model,
+        );
+
+        let cfg = match RouterConfig::from_toml_str(&toml) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!(error = %e, "dispatch: failed to build session RouterConfig");
+                return Err(RouteError::internal(e.to_string()).into_response());
+            }
+        };
+
+        let built = RouterBuilder::new()
+            .register_provider("session_provider".to_string(), provider)
+            .build(&cfg)
+            .await;
+
+        return match built {
+            Ok(r) => Ok(Arc::new(r)),
+            Err(e) => {
+                tracing::error!(error = %e, "dispatch: session RouterBuilder failed");
+                Err(RouteError::internal(e.to_string()).into_response())
+            }
+        };
+    }
+
+    // Fall through to the statically-built router (studio.toml path).
+    if let Some(r) = state.router().cloned() {
+        return Ok(r);
+    }
+
+    // No session key + no static router.
+    // Return 503 `router_not_configured` to preserve backward-compat with the
+    // Wave A4 dispatch contract (`dispatch_route.rs` integration tests pin this
+    // shape). Clients that call /api/session/status first will see
+    // `authenticated=false` and redirect to /login before dispatching.
+    Err(RouteError::service_unavailable(
+        "not authenticated; POST /api/login first or configure studio.toml",
+        "router_not_configured",
+    )
+    .into_response())
+}
+
 /// Handler for `POST /api/dispatch`.
 ///
 /// Returns:
+/// - 401 JSON `{ error, code: "no_session" }` when no `SessionKey` is held
+///   in-memory and no static router is configured (M6 primary auth check).
 /// - 503 JSON `{ error, code: "router_not_configured" }` (via the uniform
 ///   [`RouteError::ServiceUnavailable`] envelope — per F-A4-01 external
 ///   review the local inline-struct shortcut used by Wave A4 was
@@ -153,13 +280,7 @@ pub async fn dispatch_sse(
     State(state): State<AppState>,
     payload: Result<Json<DispatchRequest>, JsonRejection>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, Response> {
-    let Some(router) = state.router().cloned() else {
-        return Err(RouteError::service_unavailable(
-            "router not configured",
-            "router_not_configured",
-        )
-        .into_response());
-    };
+    let router = resolve_router(&state).await?;
 
     let req = match payload {
         Ok(Json(r)) => r,
