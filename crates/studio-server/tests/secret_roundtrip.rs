@@ -191,7 +191,7 @@ async fn login_then_dispatch_with_in_memory_key() {
     }
 
     // POST /api/login — this is the first login, no existing blob.
-    let (status, body) = do_login(&app, &endpoint, "sk-test-key", model, "s3cr3t!").await;
+    let (status, body) = do_login(&app, &endpoint, "sk-test-key", model, "s3cr3t-pass!").await;
     assert_eq!(
         status,
         StatusCode::OK,
@@ -281,7 +281,7 @@ async fn restart_drops_key_returns_401() {
     mount_anthropic_stub(&mock_server, model).await;
     let endpoint = mock_server.uri();
 
-    let (status, body) = do_login(&app1, &endpoint, "sk-restart-test", model, "pass123").await;
+    let (status, body) = do_login(&app1, &endpoint, "sk-restart-test", model, "pass1234").await;
     assert_eq!(
         status,
         StatusCode::OK,
@@ -400,4 +400,27 @@ async fn wrong_passphrase_login_returns_401() {
             "session_key must remain None after wrong-passphrase login attempt",
         );
     }
+}
+
+// ─── Test 4: short passphrase → 400 (server-side validation) ────────────────
+
+/// Sarah v3 finding: server enforces `passphrase.len() >= 8` independently
+/// of the SvelteKit client-side check, so direct curl-style POSTs cannot
+/// bypass the minimum-strength bar.
+#[tokio::test]
+async fn short_passphrase_login_returns_400() {
+    let (_tmp, _state, app) = boot_login_app("http://example.invalid".to_string()).await;
+
+    // 7-char passphrase — under the 8-char floor.
+    let (status, body) = do_login(&app, "http://example.invalid", "sk-x", "m", "short!1").await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "POST /api/login with short passphrase must return 400; body={body}",
+    );
+    let code = body["code"].as_str().unwrap_or_default();
+    assert_eq!(
+        code, "passphrase_too_short",
+        "error code must be passphrase_too_short; body={body}",
+    );
 }

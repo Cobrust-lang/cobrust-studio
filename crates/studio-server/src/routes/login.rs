@@ -133,6 +133,12 @@ pub async fn login(
             "invalid_body",
         ));
     }
+    if req.passphrase.len() < 8 {
+        return Err(RouteError::bad_request(
+            "passphrase must be at least 8 characters",
+            "passphrase_too_short",
+        ));
+    }
 
     // Check for an existing blob — if present, the new passphrase must
     // successfully open it (proves the user knows the original passphrase
