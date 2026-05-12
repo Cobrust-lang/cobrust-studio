@@ -2,17 +2,18 @@
 doc_kind: module
 module_id: studio-server
 last_verified_commit: fd7eecc
-dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0007, adr:0008, adr:0009]
+dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0007, adr:0008, adr:0009, adr:0013]
 ---
 
 # Module: studio-server
 
 ## Purpose
 
-Axum-based HTTP layer for Cobrust Studio. Owns the binary entrypoint
-(`cobrust-studio serve`), serves embedded SvelteKit web assets (via
-rust-embed per ADR-0002 — M3 dogfood), and exposes the REST + SSE API
-consumed by the frontend.
+Axum-based HTTP layer for Cobrust Studio. Owns the headless/server
+binary entrypoint (`cobrust-studio serve`), serves embedded SvelteKit web
+assets for compatibility mode (via rust-embed per ADR-0002 — M3
+dogfood), and exposes the REST + SSE API consumed by both the browser
+frontend and the desktop-first Tauri shell (ADR-0013).
 
 ## Public surface
 
@@ -205,9 +206,15 @@ crates/studio-server/src/
 
 Single-binary deployment per ADR-0002. The release binary bakes the
 SvelteKit static export under `web/build/` via `rust-embed`, served
-from memory by Axum so the user-journey "download tarball, run
-binary, open browser" requires no static-file path, no nginx, no
-volume mount.
+from memory by Axum so the compatibility/headless user journey
+"download tarball, run binary, open browser" requires no static-file
+path, no nginx, no volume mount.
+
+ADR-0013 changes the primary product narrative after M3: desktop users
+should open a Tauri app, not manually manage a browser tab. The M3
+embedded-web path remains supported as `cobrust-studio serve` for CI,
+dogfood automation, remote/server deployments, and any workflow where a
+browser-first server is intentional.
 
 New file `crates/studio-server/src/embed.rs`:
 
@@ -272,6 +279,28 @@ cleanup: trap-kill on exit
 Verified locally (commit 3b56d0e): release build produces the binary,
 smoke run with PORT=37878 PASSes — Studio sees its own 6 constitutional
 ADRs (0001..0006) via the same HTTP surface the M2 frontend uses.
+
+### Wave M9T (planned — ADR-0013 Tauri desktop runtime)
+
+Tauri becomes the primary desktop shell while this crate remains the
+HTTP/SSE backend boundary. M9T should not rewrite the route surface; it
+starts an embedded Studio server bound to `127.0.0.1:0`, discovers the
+resolved port, and gives the WebView a runtime base URL.
+
+Binding server-side constraints for M9T:
+
+- Keep `cobrust-studio serve --project <path> --port <N> [--host <addr>]`
+  supported as the headless/server entrypoint.
+- Add any embedded-server helper in a way that reuses the existing
+  `build_router(AppState)` and watcher/auto-unlock boot paths instead of
+  duplicating route setup.
+- Bind the desktop embedded server only to `127.0.0.1` with an ephemeral
+  port (`0`); do not expose a fixed public port.
+- Preserve the REST/SSE contract used by `web/src/lib/api.ts` until
+  ADR-0012 stabilises tool-call semantics.
+- Desktop smoke should prove that the app shell can load `/login`
+  against the embedded server, while the existing `serve` test/release
+  path stays green.
 
 ### Wave M8 (as-built — ADR-0009 persistent session across restart)
 
@@ -536,6 +565,8 @@ Integration tests (`tests/secret_roundtrip.rs`, 3 tests):
 
 ### Wave A6+ extensions
 
+- Tauri embedded-server lifecycle helper for ADR-0013 M9T (loopback
+  `127.0.0.1:0`, resolved base URL returned to the desktop shell).
 - Per-`Chunk` SSE streaming on `/api/dispatch` (requires plumbing
   `LlmProvider::complete_stream` through `studio_router::Router`).
 - Multi-user key derivation (per-user salt + per-user key map, deferred

@@ -12,8 +12,9 @@
 ## 0. Identity
 
 - **Project name**: Cobrust Studio
-- **One-line pitch**: AI agent team's project-management control plane —
-  login, point at a repo, and the Cobrust methodology starts working.
+- **One-line pitch**: Desktop-first AI agent team's project-management
+  control plane — open the app, point at a repo, and the Cobrust
+  methodology starts working.
 - **Audience**: engineering teams running AI-driven development at the
   ADR/finding/wave fidelity Cobrust introduced.
 - **License**: Apache-2.0 + MIT dual (ADR-0001 binding).
@@ -32,6 +33,9 @@ The 5-day MVP ships:
 - Direct LLM agent runner (lifts `cobrust-llm-router`)
 - Live dispatch stream (SSE)
 - SvelteKit UI: login / project / adr / agent / finding / ledger
+- Desktop-first Tauri runtime shell around that SvelteKit UI, while
+  preserving `cobrust-studio serve` as compatibility/headless mode
+  (ADR-0013)
 
 Explicitly deferred to post-MVP:
 
@@ -71,7 +75,10 @@ Explicitly deferred to post-MVP:
 
 ### 3.3 Efficient
 
-- Single binary deployment (rust-embed for web assets — ADR-0003).
+- Desktop app is the primary user journey; `serve` remains the
+  headless/server compatibility path (ADR-0013).
+- Single binary deployment for headless mode (rust-embed for web assets
+  — ADR-0002).
 - SSE not WebSocket for one-way streams (simpler, lower overhead).
 - SQLite + filesystem (no Postgres in MVP).
 - No allocation inside hot paths if it can be avoided.

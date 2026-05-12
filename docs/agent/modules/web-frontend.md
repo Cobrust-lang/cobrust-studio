@@ -2,7 +2,7 @@
 doc_kind: module
 module_id: web-frontend
 last_verified_commit: eff54b4
-dependencies: [adr:0001, adr:0002, adr:0003, adr:0006]
+dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0013]
 ---
 
 # Module: web-frontend
@@ -12,8 +12,14 @@ dependencies: [adr:0001, adr:0002, adr:0003, adr:0006]
 SvelteKit 5 single-page frontend for Cobrust Studio. Realises the
 SvelteKit UI line of CLAUDE.md §1 ("login / project / adr / agent /
 finding / ledger") against the `studio-server` REST + SSE surface.
-Lives under `web/` outside the Rust workspace; consumed at M3 by
-`studio-server` via `rust-embed` over `web/build/` (per ADR-0002).
+Lives under `web/` outside the Rust workspace.
+
+ADR-0013 changes the runtime posture from browser-first to
+**desktop-first Tauri shell** without rewriting this UI: Tauri embeds the
+same SvelteKit app in a desktop WebView, and `cobrust-studio serve`
+remains the compatibility/headless browser mode. M3 consumption via
+`studio-server` `rust-embed` over `web/build/` (per ADR-0002) remains
+valid for that headless/server path.
 
 ## Stack (as-built; Wave M2 deliverable)
 
@@ -152,15 +158,20 @@ web/
         └── ledger/+page.svelte
 ```
 
-### Dev mode vs M3 single-binary
+### Dev, headless, and desktop runtime modes
 
 - **Dev** (`pnpm run dev` on `:5173`): `vite.config.ts` proxies
   `/api/*` → `http://127.0.0.1:7878` (the studio-server CLI default).
   Tailwind v4 hot-reloads via the `@tailwindcss/vite` plugin.
-- **Build** (`pnpm run build`): adapter-static emits a fully
-  pre-rendered SPA into `web/build/` (index.html + _app/immutable/*).
-  M2 ships a ~236 KB build directory; M3 dogfood will `rust-embed`
-  this directory and serve same-origin from studio-server's binary.
+- **Headless/server build** (`pnpm run build`): adapter-static emits a
+  fully pre-rendered SPA into `web/build/` (index.html +
+  _app/immutable/*). M3 dogfood uses `rust-embed` to serve this
+  directory same-origin from the `cobrust-studio serve` binary.
+- **Desktop build** (M9T, ADR-0013): Tauri v2 hosts the same SvelteKit
+  build output inside a desktop WebView while an embedded Studio server
+  binds `127.0.0.1:0`. Frontend API code must keep resolving the server
+  base URL through a runtime-provided value rather than hardcoding a
+  public port.
 
 ### SSE plumbing
 
@@ -352,17 +363,22 @@ config change.
    interactions (drag-drop Kanban, command palette, multi-step
    wizards), revisit the hand-rolled-primitive call.
 
-2. **`GET /api/finding/:id` singleton route** — the finding detail
+2. **Tauri base URL injection** — M9T must decide the exact frontend
+   runtime contract for the embedded loopback server URL (for example,
+   window bootstrap state vs Tauri command). The constraint is binding:
+   no hardcoded public port in frontend API calls.
+
+3. **`GET /api/finding/:id` singleton route** — the finding detail
    dialog is summary-only because the M1 server contract deferred
    the singleton route. M3 dogfood will hit this immediately; add
    to the server surface or accept the file-walk fallback?
 
-3. **Auth scheme upgrade timing** — the M2 WebCrypto stub uses a
+4. **Auth scheme upgrade timing** — the M2 WebCrypto stub uses a
    fixed passphrase; real M3 AEAD needs a user-secret entry point
    (re-enter on each session? OS keychain integration? a derived
    master key persisted under `studio_store::session`?).
 
-4. **Error envelope code taxonomy stability** — the agent page
+5. **Error envelope code taxonomy stability** — the agent page
    renders `router_auth | router_rate_limit | router_bad_request |
    router_transport | router_server | router_failed | router_no_provider
    | router_config | router_io` codes directly. If the server taxonomy
@@ -370,13 +386,13 @@ config change.
    should we add a code → human-message lookup table on the frontend
    side, or keep that server-side?
 
-5. **Reconnection / Last-Event-ID** — `/api/events` has no
+6. **Reconnection / Last-Event-ID** — `/api/events` has no
    Last-Event-ID reconnection in M1. Frontend currently relies on
    the browser's `EventSource` auto-reconnect + an unconditional
    `refresh()` on any event. M3 may want explicit backfill if the
    event stream grows costly.
 
-6. **(Closed Wave M3 TEST)** Hermetic e2e harness wiring — landed at
+7. **(Closed Wave M3 TEST)** Hermetic e2e harness wiring — landed at
    `feature/m3-test-hermetic`. `pnpm run test:e2e` now spawns the
    release binary against a tempdir with no manual setup. The
    remaining open: dogfood-spec failure mode if the constitutional
@@ -393,6 +409,8 @@ config change.
   real AEAD M3)
 - ADR-0006 §"Addendum 2026-05-11" F-01 / F-03 (dispatch contract;
   task_tag plumbing via DispatchContext)
+- ADR-0013 (desktop-first Tauri shell; SvelteKit UI is reused, not
+  rewritten)
 - `docs/agent/modules/studio-server.md` §"Wave A4" + §"Wave A5"
   (binding wire contract — every fetch() in `src/lib/api.ts`
   anchors to a section here)

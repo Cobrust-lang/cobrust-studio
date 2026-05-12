@@ -2,9 +2,9 @@
 
 # Cobrust Studio
 
-**A self-hosted web console for managing AI coding agents under engineering discipline.**
+**A desktop-first control plane for managing AI coding agents under engineering discipline.**
 
-Point it at a git repo. It gives you a typed REST + SSE API + a 5-page web UI
+Open the desktop app or run the headless server, point it at a git repo, and it gives you a typed REST + SSE API + a 5-page SvelteKit UI
 to dispatch LLM completions, capture the resulting decisions as **Architecture
 Decision Records** (markdown), capture the surprises as **findings** (markdown),
 and ledger every token through a JSONL audit trail. All git-native — your `docs/`
@@ -30,9 +30,13 @@ work** — not toy demos — you eventually want answers to:
 4. *Are we drifting from the plan?* → live `/api/events` SSE stream as ADRs and findings get added
 5. *Is the methodology actually being followed?* → a 5-gate CI script that fails the merge if it isn't
 
-Cobrust Studio is a 9 MiB single Rust binary that gives you all five, served as
-a web UI + REST API against any git repo you point at. Markdown is source of
-truth; SQLite is just a materialized index for fast queries. There's no SaaS,
+Cobrust Studio is moving to a desktop-first Tauri shell around the same
+SvelteKit UI and Rust/Axum backend. The v0.3.x distribution is still a 9 MiB
+single Rust binary that gives you all five as a web UI + REST API against any
+git repo you point at; ADR-0013 makes the desktop app the primary v0.4.x
+product path while preserving `cobrust-studio serve` for headless/server use.
+Markdown is source of truth; SQLite is just a materialized index for fast
+queries. There's no SaaS,
 no vendor lock-in, no per-seat pricing — you self-host, your data stays on
 your laptop or server.
 
@@ -62,12 +66,17 @@ ADSD repo above without ever installing Studio.
 
 ## Try it (5 minutes, pre-built tarball)
 
-Every release tag ships 5 platform builds — **linux x86_64 + aarch64,
-macOS x86_64 + arm64, windows x86_64**. Grab one from
+v0.3.x release tags ship 5 server/headless builds — **linux x86_64 +
+aarch64, macOS x86_64 + arm64, windows x86_64**. Grab one from
 [the latest releases page](https://github.com/Cobrust-lang/cobrust-studio/releases/latest)
 and you have a working binary in under 60 seconds. No Rust toolchain,
 no Node, no `pnpm` — Studio is a single binary with the SvelteKit
 frontend baked in via rust-embed.
+
+v0.4.x is resequenced by ADR-0013: desktop app bundles become the
+primary packaging path via Tauri, while the `cobrust-studio serve`
+binary remains supported for CI, dogfood automation, and remote/server
+deployments.
 
 ```bash
 # Example for macOS arm64; pick the tarball matching your platform:

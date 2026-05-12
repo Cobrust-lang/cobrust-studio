@@ -1,7 +1,7 @@
 ---
 adr_id: "0009"
 title: M8 persistent session across binary restart — OS keychain wrap + passphrase-file fallback
-status: proposed
+status: accepted
 date: 2026-05-12
 supersedes: []
 superseded_by: []
