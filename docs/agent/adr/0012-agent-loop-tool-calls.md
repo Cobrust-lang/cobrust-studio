@@ -186,6 +186,157 @@ ledger entry (`task_tag = "agent-turn"` parent; sub-tags like
 - Network access tools (`http.get`, `http.post`) — security review needed
 - Long-running background tasks (`shell.exec --background`)
 - Multi-file atomic transactions (Aider-style edit blocks)
+- MCP (Model Context Protocol) external tool servers — v0.5.x+
+
+## Multi-subagent dispatch (OpenCode-borrowed pattern)
+
+User directive at commit `bc38a93` (2026-05-12 evening): borrow
+multi-subagent patterns from OpenCode-style projects. The
+single-agent loop above is the foundation; multi-subagent
+dispatch sits on top.
+
+### Pattern: orchestrator-and-subagent
+
+The user-facing prompt goes to an **orchestrator agent** (`role:
+orchestrator` in the wire format). For non-trivial tasks the
+orchestrator may decide to delegate a sub-task to a **subagent**
+via a built-in `agent.spawn` tool call. Each subagent runs its
+own inner agent-loop with a private conversation history; results
+flow back to the orchestrator as the `tool_result` for the
+spawning `tool_use`. The user-visible `/agent` timeline renders
+this as a nested timeline (subagent runs collapsed by default,
+expandable).
+
+This mirrors ADSD §1 P10 → P9 → P7 hierarchy: orchestrator =
+P9 tech-lead, subagents = P7 engineers. Studio's project-
+management role surfaces naturally.
+
+### New built-in tool: `agent.spawn`
+
+| Tool | Function | Safety |
+|---|---|---|
+| `agent.spawn` | Spawn a subagent with `{system, model, prompt, tools_allowed, max_iterations, label}`. Returns subagent's final text + ledger ref. | Hard cap on depth (≤ 2 — orchestrator can spawn subagents but subagents cannot spawn sub-subagents in v0.4.x). Hard cap on parallel spawns (≤ 4 per orchestrator iteration — matches ADSD §1 4-way cap). Subagent's `tools_allowed` MUST be a subset of orchestrator's. |
+
+Per-spawn ledger entries inherit the orchestrator's `task_tag`
+with a sub-tag: `task_tag = "agent-turn"`, sub-tag
+`"subagent-N-iter-M"` (M9 plumbing is the killer use case).
+
+### Subagent wire format
+
+`agent.spawn` tool input:
+
+```json
+{
+    "system": "You are a sub-task specialist for: <description>",
+    "model": "claude-haiku-4-5",
+    "prompt": "Read crates/studio-router/src/router.rs and report the public types",
+    "tools_allowed": ["fs.read", "fs.list"],
+    "max_iterations": 8,
+    "label": "router-surface-survey"
+}
+```
+
+Output: `{ "final_text": "...", "iterations": N, "tokens": {...}, "ledger_ref": "..." }`.
+
+### Hierarchy constraints
+
+- **Max depth: 2** (orchestrator → subagent; no sub-subagents).
+  v0.5.x may lift to 3 once UI nesting renders cleanly.
+- **Max parallel spawns: 4 per orchestrator iteration** (ADSD §1
+  cap). Sequential spawns across iterations bounded only by
+  orchestrator `max_iterations`.
+- **Tool allow-list inheritance**: subagent's set MUST be subset
+  of orchestrator's. Server validates at spawn-time.
+- **Cost accounting**: per-subagent tokens roll up into the
+  orchestrator's iteration ledger entry's `subagent_cost` field;
+  UI cost summary shows both flat (orchestrator-only) and
+  rolled-up (incl. subagents).
+
+### Cancellation propagation
+
+SSE client disconnect → orchestrator stops mid-iteration →
+cancel signal fans out to all in-flight subagent loops.
+Subagents finish their current `provider.complete` call
+(cannot interrupt LLM mid-token) but skip further tool calls +
+iterations.
+
+## UI design notes (美观 + 信息量合适)
+
+The `/agent` page rewrite is the user's most-touched surface.
+Borrowing from OpenCode + Claude Code + Cursor patterns:
+
+### Two-pane layout (desktop ≥ 1024px; stacked on mobile)
+
+```
+┌──────────────────────────────┬─────────────────────────────────┐
+│ Conversation timeline        │ Right rail (collapsible)        │
+│ (chronological, expandable)  │                                 │
+│                              │ • Cumulative cost: $0.0024      │
+│ [User]                       │ • Tokens in/out: 1,536 / 435    │
+│   查看当前目录位置            │ • Iterations: 3                  │
+│                              │ • Tool calls: 2 (git.status,    │
+│ [Iteration 1 · gpt-5.5]      │   fs.list)                      │
+│   ↳ git.status               │ • Subagents spawned: 0          │
+│      [clean working tree]     │ • Elapsed: 4.2s                 │
+│                              │                                 │
+│ [Iteration 2 · gpt-5.5]      │ [Cancel]   [Copy ledger ID]     │
+│   ↳ fs.list("/")             │                                 │
+│      [Cargo.toml, src/, ...]  │                                 │
+│                              │                                 │
+│ [Iteration 3 · end_turn]     │                                 │
+│ [Assistant]                  │                                 │
+│   当前项目位于 /Users/...     │                                 │
+└──────────────────────────────┴─────────────────────────────────┘
+```
+
+### Visual style guidelines
+
+- **Each iteration = a card** with 1px subtle border + 8px
+  padding. Default = 1-line summary
+  (`Iter 2 · gpt-5.5 · 145 tokens · 1 tool call · 1.4s`);
+  click to expand. **"信息量合适" = dense info on demand, not
+  spammed by default.**
+- **Tool calls = indented sub-cards** under iteration cards.
+  Header = monospace tool name + duration ms; input + output
+  collapsed.
+- **Subagent runs = nested timeline cards** with
+  `border-l-4 border-blue-500` accent. Collapsed default to
+  1-line summary ("subagent X: 3 iterations, 2 tool calls,
+  847 tokens, $0.0008"). Click to drill into the subagent's
+  inner timeline.
+- **Live counters** in right rail update as SSE events arrive.
+  Smooth number-counter increments; no layout re-flow.
+- **Color discipline**:
+  - User messages: neutral foreground.
+  - Iteration cards: subtle grey-tinted bg.
+  - Tool call: monospace tool name, muted color.
+  - Tool result: light green if exit_code=0; light red if
+    non-zero. (Matches terminal mental model.)
+  - Subagent border accent: blue. Reserved red for errored
+    subagents.
+  - Cancellation banner: subtle yellow.
+- **No spinner animations except** during active streaming.
+  Once a stream completes, spinner → static summary line. The
+  timeline IS the progress indicator.
+- **Keyboard shortcuts** (polish, post-v0.4.0):
+  `Esc`=cancel, `j`/`k`=navigate cards, `Enter`=expand focused.
+
+### Anti-OpenCode-bloat (NOT in v0.4.0)
+
+- No per-iteration model picker (orchestrator's choice carries;
+  subagents can override at spawn but not mid-iteration).
+- No code-block syntax highlighting beyond monospace (defer
+  v0.5.x — Highlight.js / Shiki adds ~200 KB bundle weight).
+- No diff renderer for `fs.write` previews (defer v0.5.x;
+  v0.4.0 shows raw `new_content` monospace).
+- No collaborative cursors / multi-user — permanently
+  out-of-scope per CLAUDE.md §1.
+
+### Mobile
+
+Single-column stacked. Right rail → sticky-bottom mini-bar with
+cost + iteration count; tap to expand. Studio is desktop-first;
+mobile is "functional, not optimised."
 
 ### Wire format
 
