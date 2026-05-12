@@ -1,5 +1,5 @@
 /**
- * /ledger — recent dispatch ledger view (Wave M2 TEST Layer 2).
+ * /ledger — recent dispatch ledger view (Wave M3 hermetic).
  *
  * Pinned UX contract:
  * 1. Page heading "Ledger" + a count "N rows shown" derived from the
@@ -11,18 +11,14 @@
  *    carries the user-typed value.
  * 4. Refresh button re-fetches.
  *
- * Test fixture (when STUDIO_E2E=1 + a tempdir harness): pre-populate
- * `<tempdir>/.studio/ledger.jsonl` via
- * `studio_router::ledger::Ledger::append(...)` so the table shows
- * deterministic rows.
- *
- * TODO M2.1: hermetic ledger seeding — for now relies on a
- * studio-server that has had at least one dispatch made against it
- * (so the JSONL is non-empty).
+ * The hermetic harness boots the server against a fresh tempdir, so
+ * the ledger starts empty. Tests that need pre-populated rows should
+ * dispatch through the SSE route first (M4 work — out of scope for
+ * the M3 done-means assertion set).
  */
-import { skipUnlessE2E, test, expect } from './_fixtures';
+import { skipIfHarnessDisabled, test, expect } from './_fixtures';
 
-test.beforeEach(() => skipUnlessE2E());
+test.beforeEach(() => skipIfHarnessDisabled());
 
 test('ledger heading + table render', async ({ page }) => {
 	await page.goto('/ledger');
