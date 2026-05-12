@@ -1,7 +1,7 @@
 ---
 doc_kind: module
 module_id: studio-server
-last_verified_commit: d26f3ac
+last_verified_commit: 65937d6
 dependencies: [adr:0001, adr:0002, adr:0003, adr:0006]
 ---
 
@@ -46,20 +46,62 @@ Middleware stack (applied by `build_router`):
   on `localhost:5173` calls Studio on `localhost:7878`; M3 embedded
   build flips to same-origin and the permissive layer becomes a no-op.
 
-### Wave A4 target (per ADR-0006 §"Addendum 2026-05-11" + CTO planning)
+### Wave A4 (as-built, verified against `crates/studio-server/src/routes/`)
 
-- `POST /api/auth/set-endpoint` — store encrypted credentials
-- `GET /api/project/current` — project metadata
-- `GET /api/adr` — list ADRs
-- `GET /api/adr/:id` — fetch one ADR
-- `POST /api/adr` — create ADR (server-side schema validation)
-- `GET /api/finding` — list findings
-- `POST /api/finding` — create finding
-- `POST /api/dispatch` — SSE stream of LLM dispatch (gated on
-  `AppState.router.is_some()`; per ADR-0006 §F-03 `DispatchContext`
-  threads `task_tag` and future span / deadline hints into the router)
-- `GET /api/ledger/recent` — recent ledger entries
-- `GET /api/events` — SSE channel for state-change events
+All 10 M1 routes landed; each handler returns
+`Result<axum::response::Response, RouteError>` and
+[`RouteError::IntoResponse`] renders a JSON `{ error, code }` body.
+
+- `POST /api/auth/set-endpoint`
+  → 200 `{ status: "stored" }` on success
+  → 400 `{ code: "invalid_body" }` on base64 / empty-scheme failure
+  Body: `{ ciphertext: base64, nonce: base64, scheme: string }`.
+  Per ADR-0003 the server is a pass-through for opaque AEAD triples.
+
+- `GET /api/project/current`
+  → 200 `{ project_root, started_at (rfc3339), version }`.
+
+- `GET /api/adr` → 200 `{ adrs: [AdrSummary, ...] }` (id-ascending).
+- `GET /api/adr/:id` → 200 `Adr` or 404 `{ code: "adr_not_found" }`.
+- `POST /api/adr` → 201 `Adr` or 400/409. Defaults: status="proposed",
+  date=today (UTC); store allocates `adr_id` (`MIN_NEW_ADR_ID..`).
+
+- `GET /api/finding` → 200 `{ findings: [FindingSummary, ...] }`.
+- `POST /api/finding` → 201 `Finding` or 400/409. Defaults: severity=
+  "P3", status="open", last_verified_commit="HEAD" (the F20 gate then
+  refuses to merge until a real SHA is stamped — by design).
+
+- `GET /api/ledger/recent[?n=N]` → 200 `{ entries: [LedgerEntry, ...] }`.
+  Default n=20; clamped to `[1, 1000]`. Reads from the SQLite
+  materialised view per ADR-0006 §"Addendum 2026-05-11" §F-02.
+
+- `GET /api/events`
+  → `text/event-stream` of JSON-bodied state-change events
+    (`adr_added | adr_modified | adr_removed | finding_added |
+    finding_modified | finding_removed | heartbeat`). 15s
+    keep-alive; lagged subscribers (256-event cap per ADR-0006 §F-07)
+    skip forward — no Last-Event-ID reconnection in M1.
+
+- `POST /api/dispatch`
+  → 503 `{ code: "router_not_configured" }` while `AppState.router`
+    is `None` (Wave A4 reality — A5 wires the construction per
+    ADR-0006 §"Addendum 2026-05-11" §F-01).
+  → SSE `text/event-stream` stub when router becomes `Some(_)`
+    (placeholder body in A4; A5 replaces it with the real
+    `router.dispatch(req).await` call).
+
+#### Watcher bridge
+
+`serve()` spawns two tokio tasks before binding the listener:
+
+```text
+store.adr().watch()      ──► AdrChangeEvent      ─► sse::EventEnvelope::Adr*  ─► EventHub
+store.finding().watch()  ──► FindingChangeEvent  ─► sse::EventEnvelope::Find* ─► EventHub
+```
+
+Spawned via `pub fn spawn_watcher_bridge(state: &AppState)` so test
+harnesses can pre-arm the bridge. Tasks live until the underlying
+`notify` watcher closes (process shutdown drops the `Store`).
 
 ## Internal architecture
 
@@ -79,13 +121,37 @@ crates/studio-server/src/
     └── version.rs    # GET /api/version
 ```
 
-### Wave A4+ extensions
+### Wave A4 layout (as-built)
 
-- `routes/adr.rs`, `routes/finding.rs`, `routes/dispatch.rs`,
-  `routes/ledger.rs`, `routes/auth.rs`, `routes/events.rs`
-- `sse.rs` — fan-out hub for live events (broadcast channel per
-  client; bounded buffer per ADR-0006 §F-07).
-- `embed.rs` — rust-embed for `web/build/` (M3).
+```
+crates/studio-server/src/
+├── lib.rs               # AppState/serve/spawn_watcher_bridge re-exports
+├── main.rs              # clap parse → tracing init → serve()
+├── cli.rs               # clap-derive Cli/Command/ServeArgs
+├── error.rs             # RouteError enum + IntoResponse (JSON {error,code})
+├── state.rs             # AppState { store, router, project_root,
+│                        #            started_at, events: EventHub }
+├── sse.rs               # EventHub fan-out (broadcast::Sender + 256-cap)
+├── app.rs               # build_router(state) — mounts 10 routes + fallback
+└── routes/
+    ├── mod.rs           # crate-level allow(missing_errors_doc)
+    ├── adr.rs           # GET /api/adr (+/:id), POST /api/adr
+    ├── auth.rs          # POST /api/auth/set-endpoint
+    ├── dispatch.rs      # POST /api/dispatch (SSE, 503 in A4)
+    ├── events.rs        # GET /api/events (SSE, watcher-bridge consumer)
+    ├── finding.rs       # GET /api/finding, POST /api/finding
+    ├── health.rs        # GET /api/health
+    ├── ledger.rs        # GET /api/ledger/recent[?n=N]
+    ├── project.rs       # GET /api/project/current
+    └── version.rs       # GET /api/version
+```
+
+### Wave A5+ extensions
+
+- `routes/dispatch.rs` body — replace the 503 placeholder with the
+  real `router.dispatch(req).await` call once auth + router
+  construction land (per ADR-0006 §"Addendum 2026-05-11" §F-01).
+- `embed.rs` — rust-embed for `web/build/` (M3 dogfood).
 
 ### AppState.router contract
 

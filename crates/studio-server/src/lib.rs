@@ -23,17 +23,22 @@
 
 pub mod app;
 pub mod cli;
+pub mod error;
 pub mod routes;
+pub mod sse;
 pub mod state;
 
 use std::net::SocketAddr;
 
-use studio_store::Store;
+use futures::StreamExt;
+use studio_store::{AdrChangeEvent, FindingChangeEvent, Store};
 use tokio::net::TcpListener;
 
 pub use crate::app::build_router;
 pub use crate::cli::{Cli, Command, ServeArgs};
+pub use crate::error::RouteError;
 pub use crate::routes::{HealthResponse, VersionResponse};
+pub use crate::sse::{EventEnvelope, EventHub, SSE_BUFFER_CAP};
 pub use crate::state::AppState;
 
 /// Crate version exposed via the `/api/version` route.
@@ -68,8 +73,15 @@ pub enum ServerError {
 pub async fn serve(args: &ServeArgs) -> Result<(), ServerError> {
     let project_root = args.project.clone();
     let store = Store::open(project_root.clone()).await?;
-    // Wave A3: router stays `None`; A4/A5 plumb the real construction.
+    // Wave A4: router stays `None` until A5 wires construction (needs
+    // credentials + `studio.toml`). See ADR-0006 §"Addendum 2026-05-11"
+    // F-01 for the binding contract.
     let state = AppState::new(store, None, project_root.clone());
+
+    // Wave A4: spawn the watcher → EventHub bridge before binding the
+    // listener so the first connected client never misses an event
+    // that fired during boot.
+    spawn_watcher_bridge(&state);
 
     let addr: SocketAddr =
         format!("{}:{}", args.host, args.port)
@@ -92,6 +104,58 @@ pub async fn serve(args: &ServeArgs) -> Result<(), ServerError> {
     let app = build_router(state);
     axum::serve(listener, app.into_make_service()).await?;
     Ok(())
+}
+
+/// Spawn two background tasks that drain
+/// [`studio_store::adr::AdrHandle::watch`] and
+/// [`studio_store::finding::FindingHandle::watch`] into the SSE event
+/// hub. Tasks live until the underlying `notify` watcher closes (which
+/// happens when the `Store` is dropped at process shutdown).
+///
+/// Public so test harnesses can pre-arm the bridge before issuing
+/// filesystem events.
+pub fn spawn_watcher_bridge(state: &AppState) {
+    let adr_stream = state.store().adr().watch();
+    let events_adr = state.events().clone();
+    tokio::spawn(async move {
+        let mut s = std::pin::pin!(adr_stream);
+        while let Some(evt) = s.next().await {
+            let envelope = match evt {
+                AdrChangeEvent::Added(p) => sse::EventEnvelope::AdrAdded {
+                    path: p.display().to_string(),
+                },
+                AdrChangeEvent::Modified(p) => sse::EventEnvelope::AdrModified {
+                    path: p.display().to_string(),
+                },
+                AdrChangeEvent::Removed(p) => sse::EventEnvelope::AdrRemoved {
+                    path: p.display().to_string(),
+                },
+            };
+            events_adr.publish(envelope);
+        }
+        tracing::debug!("adr watcher stream closed; bridge task exiting");
+    });
+
+    let finding_stream = state.store().finding().watch();
+    let events_finding = state.events().clone();
+    tokio::spawn(async move {
+        let mut s = std::pin::pin!(finding_stream);
+        while let Some(evt) = s.next().await {
+            let envelope = match evt {
+                FindingChangeEvent::Added(p) => sse::EventEnvelope::FindingAdded {
+                    path: p.display().to_string(),
+                },
+                FindingChangeEvent::Modified(p) => sse::EventEnvelope::FindingModified {
+                    path: p.display().to_string(),
+                },
+                FindingChangeEvent::Removed(p) => sse::EventEnvelope::FindingRemoved {
+                    path: p.display().to_string(),
+                },
+            };
+            events_finding.publish(envelope);
+        }
+        tracing::debug!("finding watcher stream closed; bridge task exiting");
+    });
 }
 
 #[cfg(test)]
