@@ -5,6 +5,10 @@
 # - Every public crate has a `docs/agent/modules/<crate>.md`
 # - Every public module has zh + en entries in `docs/human/{zh,en}/`
 # - Every ADR has matching frontmatter + cross-refs valid
+# - Every module-doc + finding `last_verified_commit:` is a real SHA,
+#   not the `HEAD` placeholder (F20 enforcement — ADSD v1.2.0
+#   failure-modes-catalogue: constitution mandate without workflow
+#   alignment; this gate IS the workflow that enforces the rule)
 #
 # Exits non-zero on missing coverage so CI fails loudly.
 
@@ -62,5 +66,36 @@ for adr in $(ls docs/agent/adr/0*-*.md 2>/dev/null | sort); do
     last=$n
 done
 ok "M0 — ADR id monotonic"
+
+# --- 5. Module-doc + finding last_verified_commit is a real SHA (F20) -
+# Per ADSD failure-modes-catalogue F20 (constitution-vs-workflow
+# alignment): the rule "every doc with persistent claims has a real
+# SHA in last_verified_commit" must be enforced at the gate layer,
+# not just the doc layer. Catches `HEAD` placeholders that survive
+# a doc edit without a stamp-update.
+check_last_verified() {
+    local file="$1"
+    grep -q "^last_verified_commit:" "$file" || fail "$file missing last_verified_commit frontmatter"
+    local sha
+    sha=$(grep "^last_verified_commit:" "$file" | head -1 | sed -E 's/^last_verified_commit:[[:space:]]*//')
+    if [ "$sha" = "HEAD" ] || [ -z "$sha" ]; then
+        fail "$file last_verified_commit='$sha' is a placeholder (F20: must be a real git SHA stamped at last review/merge)"
+    fi
+    if ! echo "$sha" | grep -qE '^[0-9a-f]{7,40}$'; then
+        fail "$file last_verified_commit='$sha' does not look like a git SHA (F20 enforcement; expected 7-40 hex chars)"
+    fi
+}
+for md in docs/agent/modules/*.md; do
+    [ -f "$md" ] || continue
+    check_last_verified "$md"
+done
+for fnd in docs/agent/findings/*.md; do
+    [ -f "$fnd" ] || continue
+    # findings/README.md is the index; skip
+    base=$(basename "$fnd")
+    [ "$base" = "README.md" ] && continue
+    check_last_verified "$fnd"
+done
+ok "M0 — last_verified_commit is a real SHA (F20 enforced)"
 
 ok "all gates passed"
