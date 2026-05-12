@@ -85,10 +85,12 @@ pub async fn serve(args: &ServeArgs) -> Result<(), ServerError> {
     let router = router_init::try_build_router_from_project(&project_root, &store).await?;
     let state = AppState::new(store, router, project_root.clone());
 
-    // Wave A4: spawn the watcher → EventHub bridge before binding the
-    // listener so the first connected client never misses an event
-    // that fired during boot.
-    spawn_watcher_bridge(&state);
+    // Wave A4 (A5 reconcile): the watcher → EventHub bridge is now spawned
+    // inside [`build_router`] so test harnesses that boot via
+    // `build_router(state)` directly (`tests/common/mod.rs::fresh_app`) also
+    // get a live bridge without having to duplicate the wiring. The
+    // previous explicit call here was redundant once `build_router` took
+    // ownership of the spawn.
 
     let addr: SocketAddr =
         format!("{}:{}", args.host, args.port)

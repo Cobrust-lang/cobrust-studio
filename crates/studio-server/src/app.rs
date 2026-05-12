@@ -25,6 +25,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::AppState;
 use crate::routes;
+use crate::spawn_watcher_bridge;
 
 /// JSON body returned by the 404 fallback. Structured so the M2 frontend
 /// can render a friendly "route not found" instead of parsing HTML.
@@ -36,8 +37,18 @@ struct NotFoundResponse {
 
 /// Build the Axum [`Router`] with all middleware + routes wired.
 ///
-/// Pure function — no I/O, no async — so tests can call it freely.
+/// Side effect: spawns the filesystem-watcher → SSE-event-hub bridge
+/// (via [`crate::spawn_watcher_bridge`]) on the ambient tokio runtime so
+/// `/api/events` subscribers receive ADR / finding change events without
+/// the caller having to remember to call `spawn_watcher_bridge` separately
+/// (per A5 reconcile — `tests/events_route.rs::events_sse_emits_on_adr_create`
+/// boots the app via `build_router` only and expected the bridge live).
+///
+/// Must be called from within a tokio runtime (`tokio::spawn` is used);
+/// integration tests using `#[tokio::test]` and `serve()` both satisfy
+/// this.
 pub fn build_router(state: AppState) -> Router {
+    spawn_watcher_bridge(&state);
     Router::new()
         .route("/api/health", get(routes::health))
         .route("/api/version", get(routes::version))
