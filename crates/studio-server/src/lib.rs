@@ -23,6 +23,7 @@
 
 pub mod app;
 pub mod cli;
+pub mod error;
 pub mod routes;
 pub mod state;
 
@@ -33,6 +34,7 @@ use tokio::net::TcpListener;
 
 pub use crate::app::build_router;
 pub use crate::cli::{Cli, Command, ServeArgs};
+pub use crate::error::RouteError;
 pub use crate::routes::{HealthResponse, VersionResponse};
 pub use crate::state::AppState;
 
