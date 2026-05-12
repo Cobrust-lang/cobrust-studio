@@ -129,4 +129,29 @@ fi
 echo "  $(echo "$LOGIN" | head -1 | head -c 60)..."
 echo ""
 
-echo "Dogfood smoke PASS — Studio manages its own ADRs via /api/adr ($COUNT entries) + SPA routes resolve to index.html (F-M4-01 lock)."
+echo "[5/5] POST /api/login + GET /api/session/status (M6 AEAD round-trip smoke)"
+# Verify the login + session endpoints respond with the expected JSON shape.
+# We do NOT provide real credentials here — we only probe the wire shape.
+# A passphrase-without-credentials attempt returns 400 invalid_body (expected),
+# but the endpoint itself must be reachable and return JSON.
+SESSION_STATUS=$(curl -fsSL "http://127.0.0.1:$PORT/api/session/status")
+echo "  session/status: $SESSION_STATUS"
+AUTHENTICATED=$(echo "$SESSION_STATUS" | jq -r '.authenticated')
+if [ "$AUTHENTICATED" != "true" ] && [ "$AUTHENTICATED" != "false" ]; then
+    echo "FAIL: /api/session/status did not return {authenticated: bool}; got: $SESSION_STATUS" >&2
+    exit 1
+fi
+echo "  /api/session/status returned authenticated=$AUTHENTICATED (M6 session route live)"
+# Probe POST /api/login shape — empty body must return 400 invalid_body (not 404).
+LOGIN_PROBE=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X POST "http://127.0.0.1:$PORT/api/login" \
+    -H "Content-Type: application/json" \
+    -d '{}')
+if [ "$LOGIN_PROBE" != "400" ]; then
+    echo "FAIL: POST /api/login with empty body must return 400 (got $LOGIN_PROBE)" >&2
+    exit 1
+fi
+echo "  POST /api/login (empty body) → $LOGIN_PROBE (400 expected — route is live)"
+echo ""
+
+echo "Dogfood smoke PASS — Studio manages its own ADRs via /api/adr ($COUNT entries) + SPA routes resolve to index.html (F-M4-01 lock) + M6 /api/login + /api/session/status live."

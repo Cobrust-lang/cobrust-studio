@@ -1,8 +1,8 @@
 ---
 doc_kind: module
 module_id: studio-server
-last_verified_commit: 3b56d0e
-dependencies: [adr:0001, adr:0002, adr:0003, adr:0006]
+last_verified_commit: 4610a69
+dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0007]
 ---
 
 # Module: studio-server
@@ -273,12 +273,80 @@ Verified locally (commit 3b56d0e): release build produces the binary,
 smoke run with PORT=37878 PASSes — Studio sees its own 6 constitutional
 ADRs (0001..0006) via the same HTTP surface the M2 frontend uses.
 
+### Wave M6 (as-built — ADR-0007 AEAD round-trip)
+
+M6 closes the open AEAD round-trip stub that shipped in v0.1.x. The
+server now derives an AES-256 key from the user's passphrase via
+Argon2id and seals `(endpoint, api_key, model)` in AES-256-GCM before
+writing to `session_kv`. The in-memory key enables per-dispatch
+decryption without a second passphrase entry.
+
+New module `crates/studio-server/src/secret.rs`:
+
+```text
+SessionKey([u8; 32])
+  .derive(passphrase, salt)  — Argon2id m=64MiB t=3 p=1 → 32B key
+  .seal(EndpointSecret)      — AES-256-GCM → packed blob
+  .open(&[u8])               — decrypt + deserialise → EndpointSecret
+
+EndpointSecret { endpoint, api_key, model }
+SecretError   { Kdf, Seal, Open, Malformed, UnknownScheme }
+
+SCHEME = "aes-gcm-256/argon2id-v1"
+Wire format: salt(16) || nonce(12) || ciphertext+tag
+```
+
+New AppState fields:
+
+```rust
+pub session_key: Arc<tokio::sync::RwLock<Option<SessionKey>>>,
+pub debug_session: bool,
+```
+
+New routes (merged under `/api` in `app.rs`):
+
+| Method | Path | Behaviour |
+|--------|------|-----------|
+| POST | `/api/login` | Derive key, seal secret, write `session_kv`, store key in `AppState`. |
+| POST | `/api/logout` | Drop `session_key`. |
+| GET | `/api/session/status` | `{ authenticated: bool }`. |
+| GET | `/api/session/endpoint` | Debug-only (`--debug-session`); decrypted endpoint+model, never api_key. |
+
+Dispatch integration: `resolve_router()` in `routes/dispatch.rs` checks
+`session_key` first; if present, decrypts blob and builds per-request
+`AnthropicProvider`. Falls through to static `AppState.router` (studio.toml).
+Returns `503 router_not_configured` when both are absent.
+
+CLI additions (`ServeArgs`): `--dev-api-key`, `--dev-endpoint`,
+`--dev-model`, `--debug-session`. The `--dev-api-key` flag bypasses
+`/login` and injects a synthetic credential at boot for CI/Playwright.
+Env vars `COBRUST_DEV_*` mirror the flags.
+
+Wave M6 layout addition:
+
+```
+crates/studio-server/src/
+├── secret.rs            # SessionKey / EndpointSecret / SecretError
+│                        # + 6 unit tests in #[cfg(test)]
+└── routes/
+    └── login.rs         # POST /api/login, /api/logout,
+                         # GET /api/session/status, /api/session/endpoint
+```
+
+Integration tests (`tests/secret_roundtrip.rs`, 3 tests):
+- `login_then_dispatch_with_in_memory_key` — POST /api/login →
+  wiremock Anthropic stub → dispatch resolves without ANTHROPIC_API_KEY.
+- `restart_drops_key_returns_401` — fresh AppState (no key) →
+  dispatch returns 503.
+- `wrong_passphrase_login_returns_401` — second login with wrong
+  passphrase → 400 wrong_passphrase.
+
 ### Wave A6+ extensions
 
 - Per-`Chunk` SSE streaming on `/api/dispatch` (requires plumbing
   `LlmProvider::complete_stream` through `studio_router::Router`).
-- M2 auth flow — real AEAD decryption replaces the A5 raw-bytes
-  EncryptedBlob stub in `router_init::resolve_api_key`.
+- Multi-user key derivation (per-user salt + per-user key map, deferred
+  to v0.3.x per ADR-0007 §"Consequences").
 
 ### AppState.router contract
 

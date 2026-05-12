@@ -6,22 +6,52 @@ All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepac
 
 ### Added
 
+- **M6 — AEAD round-trip complete (ADR-0007 Phase 2)**:
+  The `/login → dispatch` round-trip is fully implemented. Summary of
+  deliverables:
+  - **`crates/studio-server/src/secret.rs`** — `SessionKey` / `EndpointSecret`
+    / `SecretError`. AES-256-GCM + Argon2id (m=64MiB / t=3 / p=1). Wire
+    format: packed `salt(16) || nonce(12) || ciphertext+tag` under scheme
+    `"aes-gcm-256/argon2id-v1"`. 6 unit tests in `#[cfg(test)]` (deterministic
+    KDF, round-trip, wrong passphrase, tampered ciphertext, tampered salt,
+    malformed blob).
+  - **`POST /api/login`** — derives Argon2id key, seals credentials, writes
+    `session_kv`, stores `SessionKey` in `AppState`.
+  - **`POST /api/logout`** — drops in-memory key.
+  - **`GET /api/session/status`** — returns `{ authenticated: bool }`.
+  - **`GET /api/session/endpoint`** — debug-only (`--debug-session`), decrypted
+    endpoint+model (never api_key).
+  - **`AppState.session_key`** — `Arc<RwLock<Option<SessionKey>>>`, init `None`.
+  - **Dispatch integration** — `resolve_router()` checks `session_key` first;
+    decrypts blob + builds per-request `AnthropicProvider`. Falls through to
+    static `studio.toml` router. Returns 503 when both absent.
+  - **`--dev-api-key` / `--dev-endpoint` / `--dev-model`** CLI flags + matching
+    `COBRUST_DEV_*` env vars. `--debug-session` flag. Boot-time injection for
+    CI/Playwright/headless flows.
+  - **3 integration tests** in `tests/secret_roundtrip.rs` (un-ignored):
+    `login_then_dispatch_with_in_memory_key`, `restart_drops_key_returns_401`,
+    `wrong_passphrase_login_returns_401`. Use wiremock for hermetic Anthropic stub.
+  - **Playwright E2E** spec `web/tests/e2e/login-aead.spec.ts` — session status
+    + login + logout API-level assertions.
+  - **Docs** — `docs/human/zh/secret-storage.md` + `docs/human/en/secret-storage.md`
+    (zh/en parity); `docs/agent/modules/studio-server.md` M6 section.
+  - **README** — "Configuration" section documenting `/login` as primary flow +
+    `--dev-api-key` as explicit opt-in. "Known limitations" env-var workaround
+    line removed.
+  - **smoke-dogfood.sh** — step `[5/5] POST /api/login + GET /api/session/status`.
+  Closes Sarah v2 pilot-gate #2 ("AEAD round-trip ships, env-var workaround
+  removed") and addresses Mei v2 R3 confidence-blocker (README posture). ADR-0007
+  Phase 2 (P9 dispatch). Workspace gains `aes-gcm`, `argon2`, `rand_core` deps.
+
 - **ADR-0007 — secret-storage AEAD round-trip (M6, Phase 1 spike)**:
   Binding design for the `/login → dispatch` round-trip closure.
   Picks AES-256-GCM + Argon2id (m=64MiB / t=3 / p=1) with packed
   `salt ‖ nonce ‖ ciphertext` wire format under
-  `scheme="aes-gcm-256/argon2id-v1"`. Closes Sarah persona v2's
-  pilot-gate #2 ("AEAD round-trip ships, env-var workaround
-  removed") at the design layer; Phase 2 P9 dispatch implements.
-  Env-var resolution path is retained as the `--dev-api-key` CLI
-  escape hatch for hermetic tests + headless flows; README posture
-  changes to make `/login` the canonical primary flow.
+  `scheme="aes-gcm-256/argon2id-v1"`. Phase 1 (ADR + test skeleton).
+
 - **`Store::close() -> async ()`** — explicit SqlitePool shutdown
   for tests that unlink the db file. No-op on Unix (where unlink
   semantics allow open-file delete); mandatory on Windows-CI.
-- **`crates/studio-server/tests/secret_roundtrip.rs`** — Phase 2 P9
-  dispatch test target (3 `#[ignore]`-attributed integration tests
-  naming the M6 round-trip success criteria from ADR-0007).
 
 ### Fixed
 

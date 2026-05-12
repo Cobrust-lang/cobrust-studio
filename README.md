@@ -83,14 +83,46 @@ You should see Studio's 5 pages:
 - **/finding** — list the failures + bug postmortems captured during development
 - **/ledger** — every LLM dispatch with provider, model, tokens, latency, cost
 
-For working `/agent` dispatch in v0.1.2: set
-`ANTHROPIC_API_KEY` or `OPENAI_API_KEY` (or any OpenAI-compatible endpoint) as
-an env var **before** launching the binary. The `/login` form's WebCrypto stub
-stores credentials but the server-side AEAD round-trip is M5 work; env var is
-the actual auth path today. The `/login` UI says this in a banner.
-
 Pre-built tarball at M5 (CI matrix for linux x86_64 + linux aarch64 + macos).
 Today only the macos arm64 tarball is auto-built (`scripts/release-tarball.sh`).
+
+---
+
+## Configuration
+
+### Primary flow — `/login`
+
+Use the `/login` page to configure your LLM endpoint. Fill in:
+
+- **Endpoint URL** (e.g. `https://api.anthropic.com`)
+- **API key**
+- **Model** (e.g. `claude-opus-4-7`)
+- **Passphrase** — used to encrypt the key before disk storage (never stored itself)
+
+Studio derives an AES-256 key from your passphrase via Argon2id (~500 ms intentionally
+slow to resist brute force) and seals your credentials with AES-256-GCM. The encrypted
+blob stays in SQLite; the derived key lives only in server memory. On process restart,
+re-entering the passphrase re-derives the key — your API key stays encrypted at rest.
+
+See `docs/human/en/secret-storage.md` for the full security model.
+
+### Headless / CI escape hatch — `--dev-api-key`
+
+For CI pipelines, Playwright fixtures, or scripted usage:
+
+```bash
+cobrust-studio serve \
+  --project /path/to/project \
+  --dev-api-key sk-ant-xxx \
+  --dev-endpoint https://api.anthropic.com \
+  --dev-model claude-opus-4-7
+```
+
+This bypasses `/login` and injects credentials at boot. Also available via env vars
+`COBRUST_DEV_API_KEY`, `COBRUST_DEV_ENDPOINT`, `COBRUST_DEV_MODEL`.
+
+The studio.toml `api_key_env` field (e.g. `ANTHROPIC_API_KEY`) also remains supported
+for backward compatibility and for the studio.toml router path.
 
 ---
 
@@ -167,7 +199,7 @@ specs.
 - ✅ doc-coverage CI gate enforces 6 invariants (crate agent-docs / zh-en parity / ADR frontmatter / ADR id monotonic / `last_verified_commit` is a real git SHA / cargo test exit 0 AND 0 FAILED groups)
 - ✅ 5 findings filed (3 closed + 2 closed by the post-tag M4 audit)
 - ✅ Multi-platform tarballs in v0.1.3+ (linux x86_64 + aarch64, macOS arm64; macOS x86_64 + windows in 5-platform release.yml matrix)
-- ⚠️ `/login` UI is a credential-blob stub; env var is the actual auth path today
+- ✅ M6: AEAD round-trip on `/login` shipped — AES-256-GCM + Argon2id; `--dev-api-key` escape hatch for CI/headless use
 - ⚠️ Single-user / single-project by design — no RBAC, no multi-tenancy in v0.1.x
 - ⚠️ Bus factor 1 (looking for design partners — see below)
 
@@ -185,9 +217,9 @@ one if you're already 80% of the way there.
 
 Top friction items design partners would file against me, in priority order:
 
-1. **AEAD round-trip on `/login`** — kill the env-var workaround
+1. ~~**AEAD round-trip on `/login`** — kill the env-var workaround~~ ✅ shipped in M6
 2. **Linux + windows tarballs** via the CI matrix (release.yml landed; first cross-platform tag pending)
-3. **A `--multi-user` mode** with proper RBAC + audit log (post-MVP, M6+)
+3. **A `--multi-user` mode** with proper RBAC + audit log (post-MVP, M7+)
 4. **`task_tag` plumbing through `CompletionRequest`** (ADR-0006 §F-03 noted; partial today)
 5. **Persona simulation in CI** — already-run human-in-the-loop, not yet automated
 
