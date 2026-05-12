@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Cobrust Studio M3 dogfood smoke test.
 #
-# Boots the release binary against THIS repo and verifies the three
+# Boots the release binary against THIS repo and verifies the four
 # user-journey-critical surfaces respond correctly:
 #
 #   1. `GET /api/health`          — server is up + responsive.
@@ -9,6 +9,17 @@
 #                                   ADRs (ADR-0001..0006).
 #   3. `GET /`                    — SPA shell (or M3 dev-stub HTML) is
 #                                   served by the embedded asset handler.
+#   4. `GET /login`               — SPA fallback resolves non-root client-
+#                                   side routes through the embed Uri
+#                                   extractor (NOT the v0.1.0-pre-M4 Path
+#                                   extractor that returned an Axum error
+#                                   string for every non-root path). This
+#                                   probe is the F19 forward-implication
+#                                   from finding m4-release-readiness-spa-
+#                                   fallback-extractor.md §"Forward
+#                                   implications": smoke-dogfood.sh SHOULD
+#                                   probe a SPA route to catch this class
+#                                   of regression at script level.
 #
 # This is the M3 "Studio manages its own ADRs via Studio UI" milestone
 # proof point. If this script PASSes, the binary is dogfood-ready.
@@ -80,7 +91,7 @@ if [ "$COUNT" -lt 6 ]; then
 fi
 echo ""
 
-echo "[3/3] GET /"
+echo "[3/4] GET /"
 ROOT=$(curl -fsSL "http://127.0.0.1:$PORT/")
 HEAD_LINE=$(echo "$ROOT" | head -1)
 echo "  first line: $HEAD_LINE"
@@ -92,4 +103,30 @@ if ! echo "$ROOT" | head -c 200 | grep -qi "html"; then
 fi
 echo ""
 
-echo "Dogfood smoke PASS — Studio manages its own ADRs via /api/adr ($COUNT entries)."
+# F-M4-01 forward-implication: smoke-dogfood SHOULD probe a SPA client-
+# side route. v0.1.0 shipped with `Path<String>` on Router::fallback
+# which returned the Axum runtime error text for every non-root path
+# (/login, /adr, /agent, /finding, /ledger). The prior 3-step smoke
+# only hit `/` — covered by `serve_index`, NOT `serve_asset` — so
+# the bug walked through unchallenged. v0.1.1+ uses `Uri` extractor
+# and SPA routes return the index.html shell. This probe locks the
+# regression.
+echo "[4/4] GET /login (SPA fallback regression probe — F-M4-01)"
+LOGIN=$(curl -fsSL "http://127.0.0.1:$PORT/login")
+LOGIN_HEAD=$(echo "$LOGIN" | head -c 200)
+# v0.1.0-style bug returned "Wrong number of path arguments for `Path`"
+# as a text/plain body. Verify HTML response shape instead.
+if ! echo "$LOGIN_HEAD" | grep -qi "html"; then
+    echo "FAIL: GET /login did not return HTML — body head: $LOGIN_HEAD" >&2
+    echo "  (This is the F-M4-01 regression — verify embed::serve_asset" >&2
+    echo "   uses Uri extractor, not Path<String>.)" >&2
+    exit 1
+fi
+if echo "$LOGIN" | grep -qi "Wrong number of path arguments"; then
+    echo "FAIL: GET /login returned Axum Path-extractor error — F-M4-01 REGRESSION" >&2
+    exit 1
+fi
+echo "  $(echo "$LOGIN" | head -1 | head -c 60)..."
+echo ""
+
+echo "Dogfood smoke PASS — Studio manages its own ADRs via /api/adr ($COUNT entries) + SPA routes resolve to index.html (F-M4-01 lock)."
