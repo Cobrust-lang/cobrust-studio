@@ -166,6 +166,7 @@ impl SessionKey {
     ///
     /// # Errors
     /// Returns [`SecretError::Seal`] if the AEAD encryption fails.
+    #[doc(hidden)]
     pub fn seal_raw(&self, json_bytes: &[u8]) -> Result<Vec<u8>, SecretError> {
         let mut nonce_bytes = [0u8; NONCE_LEN];
         OsRng.fill_bytes(&mut nonce_bytes);
@@ -232,7 +233,14 @@ impl SessionKey {
 /// `provider_kind` is `#[serde(default)]` so pre-M7 sealed blobs (which
 /// have no `provider_kind` field) deserialize with `Anthropic`, matching
 /// the v0.2.x implicit behaviour.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// ## Aleksandr v3 P1
+///
+/// `Debug` is hand-written to redact `api_key` (production secret). A
+/// derived `Debug` on this struct would silently spray decrypted
+/// credentials into structured logs if any caller ever did
+/// `tracing::instrument` or `tracing::debug!("{:?}", secret)`.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EndpointSecret {
     /// LLM provider base URL (e.g. `"https://api.anthropic.com"`).
     pub endpoint: String,
@@ -243,6 +251,18 @@ pub struct EndpointSecret {
     /// Provider API kind — `Anthropic` by default for v0.2.x back-compat.
     #[serde(default)]
     pub provider_kind: ProviderKind,
+}
+
+impl std::fmt::Debug for EndpointSecret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Redact api_key; the other fields are not secrets but stay terse.
+        f.debug_struct("EndpointSecret")
+            .field("endpoint", &self.endpoint)
+            .field("api_key", &"[REDACTED]")
+            .field("model", &self.model)
+            .field("provider_kind", &self.provider_kind)
+            .finish()
+    }
 }
 
 /// Errors from the secret-storage module (ADR-0007 §"Decision").

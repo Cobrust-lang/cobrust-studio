@@ -51,7 +51,12 @@ pub enum Command {
 }
 
 /// Arguments for `cobrust-studio serve`.
-#[derive(clap::Args, Debug)]
+///
+/// `Debug` is hand-written below to redact `dev_api_key` — `clap`
+/// propagates auto-`Debug` to the parsed struct, and a panic or future
+/// `tracing::debug!("{:?}", args)` would otherwise leak the key to
+/// stderr / structured logs (Aleksandr v3 P1).
+#[derive(clap::Args)]
 pub struct ServeArgs {
     /// Path to the project root the server should manage. Created if
     /// missing (per [`studio_store::Store::open`] semantics — it ensures
@@ -126,6 +131,27 @@ pub struct ServeArgs {
         env = "COBRUST_DEV_PROVIDER_KIND"
     )]
     pub dev_provider_kind: ProviderKind,
+}
+
+impl std::fmt::Debug for ServeArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `dev_api_key` is the only secret in this struct. Render the
+        // presence/absence but never the bytes.
+        let dev_key_state = match &self.dev_api_key {
+            Some(_) => "Some([REDACTED])",
+            None => "None",
+        };
+        f.debug_struct("ServeArgs")
+            .field("project", &self.project)
+            .field("port", &self.port)
+            .field("host", &self.host)
+            .field("dev_api_key", &format_args!("{dev_key_state}"))
+            .field("dev_endpoint", &self.dev_endpoint)
+            .field("dev_model", &self.dev_model)
+            .field("debug_session", &self.debug_session)
+            .field("dev_provider_kind", &self.dev_provider_kind)
+            .finish()
+    }
 }
 
 /// Parse `--dev-provider-kind` string to [`ProviderKind`].

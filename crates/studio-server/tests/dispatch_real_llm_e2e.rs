@@ -110,6 +110,10 @@ fn build_live_provider(
         ProviderKind::Synthetic => {
             panic!("STUDIO_E2E_PROVIDER_KIND=synthetic is not a live provider")
         }
+        _ => panic!(
+            "STUDIO_E2E_PROVIDER_KIND has an unknown variant {kind:?}; \
+             extend the e2e fixture or pin to an older binary"
+        ),
     }
 }
 

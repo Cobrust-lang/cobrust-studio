@@ -48,6 +48,7 @@ pub enum Strategy {
 /// payload — preserving backward compatibility with v0.2.x callers.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum ProviderKind {
     #[default]
     Anthropic,

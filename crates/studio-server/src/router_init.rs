@@ -235,6 +235,17 @@ fn register_one(
                 }
             }
         }
+        // ProviderKind is `#[non_exhaustive]`; an unknown future variant
+        // in studio.toml means this build doesn't know how to construct
+        // a provider for it. Skip with a warning rather than panicking.
+        _ => {
+            tracing::warn!(
+                provider = name,
+                kind = ?cfg.kind,
+                "skipping provider: unknown ProviderKind variant (downgrade from newer Studio?)",
+            );
+            return None;
+        }
     };
     // `RouterBuilder::register_provider` consumes self → return new value
     let taken = std::mem::take(builder);

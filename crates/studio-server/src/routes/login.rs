@@ -44,7 +44,7 @@ use crate::secret::{EndpointSecret, ProviderKind, SCHEME, SecretError, SessionKe
 /// field continue to work with implicit `Anthropic`. `Synthetic` is rejected
 /// with 400 `invalid_provider_kind` — it is a CLI/dev-only construct with no
 /// real endpoint + key pair.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct LoginRequest {
     /// LLM provider base URL (e.g. `"https://api.anthropic.com"`).
     pub endpoint: String,
@@ -57,6 +57,21 @@ pub struct LoginRequest {
     /// Provider API kind — defaults to `Anthropic` for v0.2.x back-compat.
     #[serde(default)]
     pub provider_kind: ProviderKind,
+}
+
+impl std::fmt::Debug for LoginRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Aleksandr v3 P1 — `api_key` and `passphrase` carry plaintext
+        // secrets directly from the wire. A derived `Debug` would silently
+        // spray them into any `tracing::instrument` / panic-format output.
+        f.debug_struct("LoginRequest")
+            .field("endpoint", &self.endpoint)
+            .field("api_key", &"[REDACTED]")
+            .field("model", &self.model)
+            .field("passphrase", &"[REDACTED]")
+            .field("provider_kind", &self.provider_kind)
+            .finish()
+    }
 }
 
 /// Response body for `POST /api/login` on success.

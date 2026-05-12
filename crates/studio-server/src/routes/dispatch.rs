@@ -168,6 +168,21 @@ fn build_session_provider(
             )
             .into_response())
         }
+        // ProviderKind is `#[non_exhaustive]` (Aleksandr v3 P3 #1) — a
+        // future variant (e.g. Groq, vLLM) added in v0.4.x must surface
+        // as a 503 here rather than silently breaking the dispatch path.
+        _ => {
+            tracing::error!(
+                provider_kind = ?secret.provider_kind,
+                "dispatch: session blob has unknown provider_kind variant; \
+                 build does not support it (likely a downgrade from a newer Studio)"
+            );
+            Err(RouteError::service_unavailable(
+                "session provider_kind not supported by this build",
+                "unsupported_provider_kind",
+            )
+            .into_response())
+        }
     }
 }
 
