@@ -55,7 +55,7 @@ notify = { version = "6", default-features = false, features = ["macos_fsevent"]
 serde_yaml = "0.9"
 tokio-stream = { version = "0.1", features = ["sync"] }
 # A3 — added for studio-server (Axum HTTP layer + CLI).
-axum = { version = "0.7", default-features = false, features = ["json", "tokio", "http1", "macros"] }
+axum = { version = "0.7", default-features = false, features = ["json", "tokio", "http1", "macros", "query"] }
 tower = "0.5"
 tower-http = { version = "0.6", default-features = false, features = ["trace", "cors", "fs"] }
 clap = { version = "4", features = ["derive"] }

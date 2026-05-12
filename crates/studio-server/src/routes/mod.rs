@@ -20,6 +20,7 @@ pub mod adr;
 pub mod auth;
 pub mod finding;
 pub mod health;
+pub mod ledger;
 pub mod project;
 pub mod version;
 
@@ -27,5 +28,6 @@ pub use adr::{AdrDraftBody, AdrListResponse};
 pub use auth::{SetEndpointRequest, SetEndpointResponse};
 pub use finding::{FindingDraftBody, FindingListResponse};
 pub use health::{HealthResponse, health};
+pub use ledger::{LedgerRecentResponse, LEDGER_DEFAULT_N, LEDGER_MAX_N};
 pub use project::ProjectCurrentResponse;
 pub use version::{VersionResponse, version};
