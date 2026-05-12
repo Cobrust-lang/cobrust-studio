@@ -2,6 +2,68 @@
 
 All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] — 2026-05-12
+
+**M5 polish cycle — persona-audit-driven improvements + first multi-platform
+release tarballs (5-platform CI matrix exercised).**
+
+### Added
+
+- **5-platform release tarball matrix** via `.github/workflows/release.yml`:
+  - x86_64-unknown-linux-gnu / aarch64-unknown-linux-gnu
+  - x86_64-apple-darwin / aarch64-apple-darwin
+  - x86_64-pc-windows-msvc
+  Each builds the web bundle + rust-embeds it + tarball/zip + sha256 → GitHub Release assets. Sarah persona's #2 adoption blocker
+  (linux + windows pending) closed.
+- **Full CI matrix** in `.github/workflows/ci.yml`: cross-platform build/test/clippy + frontend gates (pnpm install + check + test:unit + build) + `cargo audit` + **hermetic Playwright e2e against the live release binary on Linux** (14 specs + 2 dogfood specs run on every push). Aleksandr persona's "no CI matrix caught either P0" critique closed.
+- **N=2 ADSD case study** published at
+  https://github.com/Cobrust-lang/agent-driven-development/blob/main/plugins/adsd/skills/agent-driven-development/case-study/cobrust-studio-experience.md
+  — 1370 lines documenting what Studio validated / stressed / extended in the methodology.
+- **`.github/ISSUE_TEMPLATE/design-partner.md`** + `bug-report.md` —
+  5-section design-partner intake form (mirrors Sarah persona's
+  build-vs-buy questions) + structured bug template.
+- **`CONTRIBUTING.md`** — reads-first-code-second contribution
+  discipline; PR size to required artifacts mapping; explicit
+  "what we won't accept" list.
+
+### Changed
+
+- **`Router::order_preferred()` allocation pattern** —
+  `Strategy::Latency` ordering now sorts indices into
+  `&self.preferred` instead of cloning `ProviderModel` into the
+  intermediate sort buffer. Sort buffer per-element size drops from
+  ~96+ bytes (`(f64, ProviderModel)` with String allocations) to
+  24 bytes (`(f64, usize)`). Invisible at small N; material at
+  M6 multi-provider scale. Aleksandr persona's PR #1.
+- **README rewrite** — leads with "What it actually is (30-second
+  version)" + methodology vocabulary table (ADR / finding / wave /
+  Tx tag / 5 gates / 守闸 with English gloss) + "Why this and not
+  Linear + git?" comparison matrix. "Honest status" section moved
+  to the bottom (was competing with the Try-It CTA per Mei
+  persona v2). "N=2 case study" framing softened to "Studio
+  dogfoods ADSD."
+- **`studio-router/Cargo.toml`** — removed dead deps `hex`,
+  `tracing`, `unicode-normalization`, `uuid`. Lifted from
+  upstream's Cargo.toml but the post-strip code path doesn't use
+  any. Workspace.dependencies entries kept (other crates use
+  them). Aleksandr persona's PR #2 (F-05 from M4 review).
+
+### Fixed
+
+- **doc-coverage CI shallow-clone**: `actions/checkout@v4` default
+  shallow clone broke §5 git-reachability check on
+  `last_verified_commit` SHAs. Set `fetch-depth: 0` on
+  doc-coverage + playwright-hermetic jobs.
+
+### Methodology firsts (this cycle)
+
+- First **multi-platform CI matrix** for a cobrust-lang project
+  (5 platforms × Rust 5-gate + frontend gates + audit + Playwright)
+- First **persona-driven PR cycle** with two-round continuous
+  testing (Mei v1 → v2; Aleksandr v1 → v2 in-flight)
+- First **methodology back-port** from a downstream case study to
+  the ADSD reference catalogue
+
 ## [0.1.2] — 2026-05-12
 
 **Patch release fixing build-from-tag for v0.1.1.**
