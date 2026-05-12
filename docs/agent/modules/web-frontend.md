@@ -1,7 +1,7 @@
 ---
 doc_kind: module
 module_id: web-frontend
-last_verified_commit: a66b365
+last_verified_commit: eff54b4
 dependencies: [adr:0001, adr:0002, adr:0003, adr:0006]
 ---
 
@@ -254,52 +254,97 @@ pnpm run test:unit
 Lives under `tests/e2e/`:
 
 ```
-tests/e2e/_fixtures.ts   # shared skip-gate + env knobs
-tests/e2e/login.spec.ts  # 3 tests — endpoint config flow
-tests/e2e/adr.spec.ts    # 3 tests — list / create / detail
-tests/e2e/agent.spec.ts  # 2 tests — dispatch SSE (router-None + Some)
-tests/e2e/finding.spec.ts# 3 tests — list / create / summary detail
-tests/e2e/ledger.spec.ts # 3 tests — list / n-query / refresh
+tests/e2e/_fixtures.ts          # studioBaseURL + skipIfHarnessDisabled
+tests/e2e/_setup.ts             # globalSetup — tempdir + spawn (hermetic)
+tests/e2e/_teardown.ts          # globalTeardown — kill + rmdir
+tests/e2e/_setup-dogfood.ts     # globalSetup — repo-root spawn (dogfood)
+tests/e2e/_teardown-dogfood.ts  # globalTeardown — kill (no tempdir)
+tests/e2e/login.spec.ts         # 3 tests — endpoint config flow
+tests/e2e/adr.spec.ts           # 3 tests — list / create / detail
+tests/e2e/agent.spec.ts         # 2 tests — dispatch SSE (router-None + Some)
+tests/e2e/finding.spec.ts       # 3 tests — list / create / summary detail
+tests/e2e/ledger.spec.ts        # 3 tests — list / n-query / refresh
+tests/e2e/dogfood.spec.ts       # 2 tests — M3 done-means constitutional ADRs
 ```
 
-Total: 14 specs, **all skipped by default**. Flip `STUDIO_E2E=1` to
-run them against a live backend.
+Total: 14 hermetic specs + 2 dogfood specs. **Wave M3 unflagged the
+M2 SKIPPED gate** — `pnpm run test:e2e` now spawns the release binary
+automatically (see `_setup.ts`) and runs the suite end-to-end. The
+SKIPPED-with-reason path is reserved for the *binary-missing* fallback
+during cross-branch handoff (see "Cross-branch dependency" below).
 
-Harness model (documented in `playwright.config.ts`):
-
-```
-┌──────────────────────┐    /api/*    ┌────────────────────────┐
-│ vite preview :4173   │ ──────────►  │ cobrust-studio :7878   │
-│ (adapter-static)     │   vite proxy │ --project <tempdir>    │
-└──────────────────────┘              └────────────────────────┘
-        ▲
-        │ navigation
-   ┌─────────┐
-   │chromium │  Playwright drives this.
-   └─────────┘
-```
-
-To run locally:
+#### Harness — hermetic project
 
 ```
-cargo build --bin cobrust-studio
-cobrust-studio serve --project $(mktemp -d) --port 7878 &
-STUDIO_E2E=1 pnpm run test:e2e
+┌──────────────────────────────────────────────────────────────┐
+│ _setup.ts: mkdtemp + spawn target/release/cobrust-studio     │
+│            --project <tempdir> --port <random>               │
+│                                                              │
+│   ┌────────────────────────────┐                             │
+│   │ cobrust-studio :<random>   │  ◄── chromium navigations   │
+│   │ rust-embed serves the SPA  │     (login / adr / agent /  │
+│   │ same-origin, no proxy      │      finding / ledger)      │
+│   └────────────────────────────┘                             │
+│                                                              │
+│ _teardown.ts: SIGINT → SIGKILL grace → rmdir tempdir         │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-The agent-page router-on test additionally requires
-`STUDIO_E2E_ROUTER=1` plus a `studio.toml` declaring a synthetic
-provider in the tempdir.
+Key knobs:
 
-**Why the skip gate?** The hermetic harness — cargo build cache +
-spawn lifecycle + tempdir seeding + studio.toml fixturing — is a
-day-of-work on its own and was deferred to Wave M2.1 to keep
-M2 TEST tight (≤180 min). Until then the specs serve as living
-documentation of the UX contract + a one-flag path to a real run.
+- `STUDIO_E2E_ROUTER=1` — setup writes a synthetic-provider
+  `studio.toml` into the tempdir so `/api/dispatch` returns 200 SSE
+  (router-on universe of `agent.spec.ts`). Default: router-off (503).
+- `STUDIO_E2E_DEBUG=1` — surface server stderr + setup tracing on the
+  Playwright stdout (useful when a setup races a port collision).
 
-Open question #6 (added Wave M2 TEST): when does the M2.1 hermetic
-harness land? Until it does, the e2e specs add zero CI signal — only
-manual-flip signal. Tracked separately from M2 release scope.
+#### Harness — dogfood project (M3 done-means)
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ _setup-dogfood.ts: spawn target/release/cobrust-studio       │
+│                    --project <repo-root> --port <random>     │
+│                                                              │
+│ dogfood.spec.ts navigates to /adr and asserts the 6          │
+│ constitutional ADRs (per CLAUDE.md §6) render in the table.  │
+│                                                              │
+│ _teardown-dogfood.ts: kill child (no tempdir to remove).     │
+└──────────────────────────────────────────────────────────────┘
+```
+
+The dogfood spec is the binding M3 done-means test per CLAUDE.md §6
+(`Studio manages its own ADRs via Studio UI`). It uses a SEPARATE
+config (`playwright-dogfood.config.ts`) because Playwright resolves
+one `globalSetup`/`globalTeardown` pair per config, and the dogfood
+setup spawns against the repo root rather than a tempdir.
+
+#### To run locally
+
+```
+bash scripts/build-release.sh     # M3 DEV — produces target/release/cobrust-studio
+cd web
+pnpm install
+pnpm run test:e2e                  # 14 hermetic specs
+pnpm run test:e2e:dogfood          # 2 dogfood specs (constitutional ADRs)
+```
+
+#### Cross-branch dependency (M3 only)
+
+The hermetic + dogfood projects both spawn `target/release/cobrust-studio`.
+Two upstream pieces are required, both shipped by the
+`feature/m3-dev-embed-dogfood` branch:
+
+1. `scripts/build-release.sh` — wraps `cargo build --release` with the
+   `web/build` adapter-static artefact present (M3 DEV's work).
+2. `embed.rs` in `studio-server` — rust-embed integration that serves
+   `web/build/` same-origin so page navigations no longer 404.
+
+If either is missing in the active checkout, `_setup.ts` /
+`_setup-dogfood.ts` detect the absent binary, set
+`STUDIO_E2E_SKIP=1`, and every spec's `beforeEach` short-circuits
+with a reason string. The suite reports skips (green) instead of
+spurious failures — the CTO can re-run after the DEV merge with no
+config change.
 
 ## Open questions for CTO (Wave M3)
 
@@ -330,6 +375,14 @@ manual-flip signal. Tracked separately from M2 release scope.
    the browser's `EventSource` auto-reconnect + an unconditional
    `refresh()` on any event. M3 may want explicit backfill if the
    event stream grows costly.
+
+6. **(Closed Wave M3 TEST)** Hermetic e2e harness wiring — landed at
+   `feature/m3-test-hermetic`. `pnpm run test:e2e` now spawns the
+   release binary against a tempdir with no manual setup. The
+   remaining open: dogfood-spec failure mode if the constitutional
+   ADR titles drift (e.g. a CTO renames ADR-0001 to drop "Stack
+   choice"); the dogfood pattern matchers will need an update in
+   the same PR.
 
 ## Cross-references
 
