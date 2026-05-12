@@ -1,7 +1,7 @@
 ---
 doc_kind: roadmap
 roadmap_id: v0.4.x
-last_verified_commit: 070b017
+last_verified_commit: b6cc0b8
 status: live
 ---
 
@@ -15,20 +15,73 @@ status: live
 
 ## In flight (v0.3.x → v0.4.0)
 
+The v0.4.0 wave grew significantly between commits `bc9e624` (ADR-
+0009 spike) and `b6cc0b8` (ADR-0012 spike) as user dogfood feedback
+arrived. Four M-waves now queued, three of them Phase 1 spiked +
+awaiting Phase 2 dispatch:
+
 ### M8 — Persistent session across binary restart (ADR-0009)
 
-- **Status**: Phase 2 P9 dispatch in flight on Opus 4.7
+- **Status**: Phase 2 P9 dispatch **in flight** on Opus 4.7
   (`aa99715d362150583`, ~180-240 min wall-clock)
 - **Why now**: user dogfoods Studio against own projects daily +
   restarts the server frequently → passphrase re-entry friction is
-  the highest user-felt issue. Mei v3 also flagged.
-- **Scope**: OS keychain wrap (macOS Keychain / freedesktop secret-
-  service / Windows DPAPI via `keyring` crate) + 0600 passphrase
-  file fallback for environments without keychain access (Docker,
-  systemd, etc.). Opt-in via `--persist-session=keychain|file`
-  (default: `none`, preserves v0.3.0 behaviour).
-- **Closes**: Sarah v3/v4 Gate B; design-partner priority list item
-  #4 from README.
+  the highest user-felt issue. Mei v3 also flagged. **User dogfood
+  feedback 2026-05-12 evening #1 ("没有持久化存储 api 端点信息")
+  is exactly this fix.**
+- **Scope**: OS keychain wrap + 0600 file fallback. Opt-in
+  `--persist-session=keychain|file` (default `none`).
+- **Closes**: Sarah v3/v4 Gate B + user dogfood #1.
+
+### M9 — `task_tag` plumbing (ADR-0010)
+
+- **Status**: Phase 1 spike landed (`c0dcd57`); Phase 2 P9
+  dispatch queued **post-M8 merge** (both touch `dispatch.rs`).
+- **Scope**: `DispatchContext` newtype + `Router::dispatch_ctx`
+  method + per-iteration ledger entries via `task_tag`. Wire
+  format additive (back-compat with v0.3.0 callers).
+- **Estimated**: ~60-90 min sonnet 4.6.
+- **Closes**: ADR-0006 §F-03 deferred decision; user-dogfooder
+  cost-by-task-type ledger filtering.
+
+### M10 — i18n zh/en UI toggle (ADR-0011)
+
+- **Status**: Phase 1 spike landed (`102198c`); Phase 2 P9
+  dispatch queued **post-M8 merge** (both touch `/login` page).
+- **Scope**: Custom Svelte 5 store + en/zh dicts, top-right
+  `[ EN | 中 ]` toggle, localStorage persistence, ~80-150 keys
+  initial scope (5-page chrome only).
+- **Estimated**: ~90-120 min sonnet 4.6.
+- **Closes**: User dogfood feedback 2026-05-12 evening #3 ("没有
+  中英文切换").
+
+### M11 — Agent-loop tool-call environment (ADR-0012)
+
+- **Status**: Phase 1 spike landed (`b6cc0b8`); Phase 2 P9
+  dispatch queued **post-M8/M9/M10 merges** (the foundation
+  pieces should be stable first). **Biggest wave since M0.**
+- **Scope**: `/api/agent-turn` route + agent_loop module + 5
+  read-only built-in tools (`fs.read`, `fs.list`, `git.status`,
+  `git.diff`, `project_tree`) + 3 opt-in write tools (`fs.write`,
+  `fs.delete`, `shell.exec`) gated behind `--enable-write-tools` +
+  per-provider tool-call API translation + SvelteKit `/agent`
+  page rewritten as iteration timeline.
+- **Estimated**: ~180-240 min Opus 4.7 (foundation work).
+- **Closes**: User dogfood feedback 2026-05-12 evening 大问题
+  (the framing one — "没有建立 Agent loop toolcall 环境").
+- **Scope shift**: CLAUDE.md §1 explicitly deferred "MCP-based
+  tool calls" + "runner adapters" to post-MVP. M11 promotes
+  built-in tool calls (NOT MCP yet — MCP stays v0.5.x+) from
+  deferred to v0.4.0 shipped. Phase 2 lands the CLAUDE.md §1
+  amendment in the same commit.
+
+### Tag plan
+
+v0.4.0 release notes will bundle all four M-waves (M8 + M9 + M10 +
+M11). Total expected wall-clock: ~9-12 hours of P9 dispatches
+serialised. Release readiness gated on Sarah-style continuous
+persona audit pass + cargo audit clean + 5-platform release.yml
+green-first-time (continuing the v0.2.1+ streak).
 
 ---
 
