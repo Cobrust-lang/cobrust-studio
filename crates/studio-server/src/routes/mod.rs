@@ -18,6 +18,7 @@
 
 pub mod adr;
 pub mod auth;
+pub mod events;
 pub mod finding;
 pub mod health;
 pub mod ledger;
