@@ -43,7 +43,7 @@ test('login form rejects passphrases shorter than 8 chars (client-side)', async 
 	await page.getByPlaceholder('https://api.anthropic.com').fill('https://api.anthropic.com');
 	await page.getByPlaceholder('sk-…').fill('sk-test-fixture-key');
 	await page.getByPlaceholder('claude-opus-4-7').fill('claude-opus-4-7');
-	await page.getByPlaceholder(/used to derive/i).fill('short');
+	await page.getByPlaceholder(/encrypts your API key/i).fill('short');
 	await page.getByRole('button', { name: /unlock session/i }).click();
 	await expect(page.getByText(/must be ≥ 8 characters/i)).toBeVisible();
 });
@@ -56,7 +56,7 @@ test('successful login posts plaintext to /api/login and redirects to /adr', asy
 	// Use the same passphrase as login-aead.spec.ts to avoid the
 	// wrong-passphrase guard when both specs run against the same
 	// hermetic binary (session_kv blob persists across tests).
-	await page.getByPlaceholder(/used to derive/i).fill('playwright-test-passphrase-m6');
+	await page.getByPlaceholder(/encrypts your API key/i).fill('playwright-test-passphrase-m6');
 	// M7: Provider dropdown — URL hint auto-selects anthropic for api.anthropic.com.
 	// The select is already defaulted/hinted to 'anthropic' but we assert it explicitly.
 	const providerSelect = page.getByRole('combobox');
