@@ -268,7 +268,7 @@ Top friction items design partners would file against me, in priority order:
 
 1. ~~**AEAD round-trip on `/login`** — kill the env-var workaround~~ ✅ shipped in M6 (v0.2.0)
 2. ~~**5-platform tarballs first-time green**~~ ✅ shipped in v0.2.1 (cross-compile patch)
-3. **Multi-provider `/login`** — today the form path hardcodes `AnthropicProvider`; OpenAI-compat endpoints (vLLM / DeepSeek / Together / OpenRouter / Groq) only resolve via the `studio.toml` static path. ADR-0008 spike in flight.
+3. ~~**Multi-provider `/login`**~~ ✅ shipped in M7 (v0.3.0) — `LoginRequest` + `EndpointSecret` gain `provider_kind` (Anthropic / OpenAI-compat); the SvelteKit form adds a Provider dropdown with URL-based auto-suggest. vLLM / DeepSeek / Together / OpenRouter / Groq / Ollama now work end-to-end via the session path. ADR-0008 Phase 2 merged.
 4. **Persistent session across binary restart** — currently the in-memory `SessionKey` drops on restart and the user re-enters their passphrase. For systemd/Docker long-lived runs, wrap the key with OS keychain (macOS Keychain / freedesktop secret-service / Windows DPAPI). v0.3.x ADR pending.
 5. **A `--multi-user` mode** with proper RBAC + audit log (post-MVP, M7+)
 6. **`task_tag` plumbing through `CompletionRequest`** (ADR-0006 §F-03 noted; partial today)

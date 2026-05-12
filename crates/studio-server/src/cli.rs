@@ -15,6 +15,11 @@
 //! - `--dev-model <MODEL>` — override model when using `--dev-api-key`.
 //! - `--debug-session` — expose `GET /api/session/endpoint` (debug introspection).
 //!
+//! ## M7 additions (ADR-0008)
+//!
+//! - `--dev-provider-kind <KIND>` — provider API kind for the `--dev-api-key`
+//!   boot-time injection. Defaults to `anthropic` for v0.2.x backward compat.
+//!
 //! These are explicit opt-ins. The `/login` route is always the canonical
 //! primary flow for interactive use; `--dev-api-key` is for CI, Playwright
 //! fixtures, and headless scripts (per ADR-0007 §"Env-var path retention").
@@ -22,6 +27,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use studio_router::ProviderKind;
 
 /// Top-level CLI. Each subcommand is mutually exclusive.
 #[derive(Parser, Debug)]
@@ -106,4 +112,30 @@ pub struct ServeArgs {
     /// introspection. Off by default; must be explicitly opted-in.
     #[arg(long)]
     pub debug_session: bool,
+
+    /// Provider kind for the `--dev-api-key` boot-time injection path
+    /// (M7, ADR-0008). Defaults to `anthropic` for backward compat with
+    /// v0.2.x callers that use `--dev-api-key` without specifying a kind.
+    ///
+    /// Accepted values: `anthropic`, `openai`, `synthetic`.
+    #[arg(
+        long,
+        value_name = "KIND",
+        default_value = "anthropic",
+        value_parser = parse_dev_provider_kind,
+        env = "COBRUST_DEV_PROVIDER_KIND"
+    )]
+    pub dev_provider_kind: ProviderKind,
+}
+
+/// Parse `--dev-provider-kind` string to [`ProviderKind`].
+fn parse_dev_provider_kind(s: &str) -> Result<ProviderKind, String> {
+    match s {
+        "anthropic" => Ok(ProviderKind::Anthropic),
+        "openai" => Ok(ProviderKind::Openai),
+        "synthetic" => Ok(ProviderKind::Synthetic),
+        other => Err(format!(
+            "unknown provider kind {other:?}; expected one of: anthropic, openai, synthetic"
+        )),
+    }
 }

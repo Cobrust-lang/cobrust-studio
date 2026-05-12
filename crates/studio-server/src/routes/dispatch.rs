@@ -50,8 +50,9 @@ use futures::StreamExt;
 use futures::stream::{self, Stream};
 use serde::{Deserialize, Serialize};
 use studio_router::{
-    AnthropicProvider, CompletionRequest, DispatchResponse, LlmError, LlmProvider, Message, Role,
-    RouterBuilder, RouterConfig, RouterError, SamplingParams, TokenUsage,
+    AnthropicProvider, CompletionRequest, DispatchResponse, LlmError, LlmProvider, Message,
+    OpenAiProvider, ProviderKind, Role, RouterBuilder, RouterConfig, RouterError, SamplingParams,
+    TokenUsage,
 };
 
 use crate::AppState;
@@ -126,6 +127,50 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/", post(dispatch_sse))
 }
 
+/// Construct the per-session LLM provider from a decrypted [`EndpointSecret`].
+///
+/// Returns `(provider, toml_kind_str)` on success, or an HTTP [`Response`]
+/// (503 / 500) on failure. Extracted from [`resolve_router`] to keep that
+/// function under the 100-line Clippy ceiling.
+#[allow(clippy::result_large_err)] // Response is large; same pattern as resolve_router.
+fn build_session_provider(
+    secret: &crate::secret::EndpointSecret,
+) -> Result<(Arc<dyn LlmProvider>, &'static str), Response> {
+    match secret.provider_kind {
+        ProviderKind::Anthropic => {
+            match AnthropicProvider::new("session_provider", &secret.endpoint, &secret.api_key) {
+                Ok(p) => Ok((Arc::new(p), "anthropic")),
+                Err(e) => {
+                    tracing::error!(error = %e, "dispatch: failed to construct AnthropicProvider");
+                    Err(RouteError::internal(e.to_string()).into_response())
+                }
+            }
+        }
+        ProviderKind::Openai => {
+            match OpenAiProvider::new("session_provider", &secret.endpoint, &secret.api_key) {
+                Ok(p) => Ok((Arc::new(p), "openai")),
+                Err(e) => {
+                    tracing::error!(error = %e, "dispatch: failed to construct OpenAiProvider");
+                    Err(RouteError::internal(e.to_string()).into_response())
+                }
+            }
+        }
+        ProviderKind::Synthetic => {
+            // Unreachable per /api/login validation (Synthetic is rejected at
+            // login time with 400 invalid_provider_kind). Defense in depth.
+            tracing::error!(
+                "dispatch: session blob has provider_kind=Synthetic, \
+                 which /api/login forbids; possible data corruption"
+            );
+            Err(RouteError::service_unavailable(
+                "synthetic provider not valid for session-driven dispatch",
+                "invalid_session",
+            )
+            .into_response())
+        }
+    }
+}
+
 /// Resolve the dispatch router for a single request.
 ///
 /// Priority (ADR-0007 §"Dispatch integration"):
@@ -179,16 +224,10 @@ async fn resolve_router(state: &AppState) -> Result<Arc<studio_router::Router>, 
             }
         })?;
 
-        // Build a per-request router with the decrypted AnthropicProvider.
+        // Build a per-request router with the decrypted provider.
         // Per ADR-0007: "The provider is constructed per-dispatch (no pooling)".
-        let provider: Arc<dyn LlmProvider> =
-            match AnthropicProvider::new("session_provider", &secret.endpoint, &secret.api_key) {
-                Ok(p) => Arc::new(p),
-                Err(e) => {
-                    tracing::error!(error = %e, "dispatch: failed to construct AnthropicProvider");
-                    return Err(RouteError::internal(e.to_string()).into_response());
-                }
-            };
+        // M7 (ADR-0008): dispatch on provider_kind instead of hardcoding Anthropic.
+        let (provider, kind_toml) = build_session_provider(&secret)?;
 
         // Minimal RouterConfig pointing at the decrypted model.
         let model_tag = format!("session_provider:{}", secret.model);
@@ -199,12 +238,13 @@ strategy = "quality"
 preferred = ["{model_tag}"]
 
 [providers.session_provider]
-kind = "anthropic"
+kind = "{kind}"
 base_url = "{endpoint}"
 api_key_env = ""
 models = ["{model}"]
 "#,
             model_tag = model_tag,
+            kind = kind_toml,
             endpoint = secret.endpoint,
             model = secret.model,
         );

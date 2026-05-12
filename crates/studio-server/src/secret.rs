@@ -44,6 +44,11 @@ use argon2::Argon2;
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 
+// Re-export so `routes/login.rs` and `routes/dispatch.rs` can use
+// `crate::secret::ProviderKind` without crossing the studio-router boundary
+// awkwardly, while tests in this crate import it from one place.
+pub use studio_router::ProviderKind;
+
 /// Scheme tag written to `session_kv.scheme` for this module's blobs.
 /// The `-v1` suffix locks the Argon2id parameter set (ADR-0007 §"Decision").
 pub const SCHEME: &str = "aes-gcm-256/argon2id-v1";
@@ -152,6 +157,34 @@ impl SessionKey {
         Ok(blob)
     }
 
+    /// Seal raw JSON bytes into the packed `salt || nonce || ciphertext+tag`
+    /// wire format without going through [`EndpointSecret`] serialisation.
+    ///
+    /// Used by integration tests to simulate a pre-M7 binary that seals a
+    /// JSON payload that has no `provider_kind` field, verifying the
+    /// `#[serde(default)]` back-compat path when `open()` decrypts it.
+    ///
+    /// # Errors
+    /// Returns [`SecretError::Seal`] if the AEAD encryption fails.
+    pub fn seal_raw(&self, json_bytes: &[u8]) -> Result<Vec<u8>, SecretError> {
+        let mut nonce_bytes = [0u8; NONCE_LEN];
+        OsRng.fill_bytes(&mut nonce_bytes);
+
+        let key = Key::<Aes256Gcm>::from_slice(&self.key);
+        let cipher = Aes256Gcm::new(key);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let ciphertext = cipher
+            .encrypt(nonce, json_bytes)
+            .map_err(|e| SecretError::Seal(e.to_string()))?;
+
+        let mut blob = Vec::with_capacity(HEADER_LEN + ciphertext.len());
+        blob.extend_from_slice(&self.salt);
+        blob.extend_from_slice(&nonce_bytes);
+        blob.extend_from_slice(&ciphertext);
+        Ok(blob)
+    }
+
     /// Open and decrypt a packed blob produced by [`Self::seal`].
     ///
     /// The blob must be at least [`MIN_BLOB_LEN`] bytes. The salt is
@@ -193,6 +226,12 @@ impl SessionKey {
 /// Serialized as JSON before AES-GCM encryption; deserialized after
 /// decryption. The `model` field enables the per-dispatch provider
 /// construction without a separate config lookup.
+///
+/// ## M7 addition (ADR-0008)
+///
+/// `provider_kind` is `#[serde(default)]` so pre-M7 sealed blobs (which
+/// have no `provider_kind` field) deserialize with `Anthropic`, matching
+/// the v0.2.x implicit behaviour.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EndpointSecret {
     /// LLM provider base URL (e.g. `"https://api.anthropic.com"`).
@@ -201,6 +240,9 @@ pub struct EndpointSecret {
     pub api_key: String,
     /// Model identifier (e.g. `"claude-opus-4-7"`).
     pub model: String,
+    /// Provider API kind — `Anthropic` by default for v0.2.x back-compat.
+    #[serde(default)]
+    pub provider_kind: ProviderKind,
 }
 
 /// Errors from the secret-storage module (ADR-0007 §"Decision").
@@ -265,6 +307,7 @@ mod tests {
             endpoint: "https://api.anthropic.com".to_string(),
             api_key: "sk-rederive".to_string(),
             model: "claude-opus-4-7".to_string(),
+            provider_kind: ProviderKind::Anthropic,
         };
         let blob = key1.seal(&secret).unwrap();
 
@@ -294,6 +337,7 @@ mod tests {
             endpoint: "https://api.anthropic.com".to_string(),
             api_key: "sk-ant-test-key".to_string(),
             model: "claude-opus-4-7".to_string(),
+            provider_kind: ProviderKind::Anthropic,
         };
         let blob = key.seal(&secret).unwrap();
         let recovered = key.open(&blob).unwrap();
@@ -312,6 +356,7 @@ mod tests {
             endpoint: "https://api.example.com".to_string(),
             api_key: "sk-secret".to_string(),
             model: "model-x".to_string(),
+            provider_kind: ProviderKind::Anthropic,
         };
         let blob = correct_key.seal(&secret).unwrap();
         let result = wrong_key.open(&blob);
@@ -330,6 +375,7 @@ mod tests {
             endpoint: "https://api.anthropic.com".to_string(),
             api_key: "sk-tamper".to_string(),
             model: "model-y".to_string(),
+            provider_kind: ProviderKind::Anthropic,
         };
         let mut blob = key.seal(&secret).unwrap();
         // Flip the last byte of the ciphertext (within the GCM tag region).
@@ -361,6 +407,7 @@ mod tests {
             endpoint: "https://api.example.com".to_string(),
             api_key: "sk-salt".to_string(),
             model: "model-z".to_string(),
+            provider_kind: ProviderKind::Anthropic,
         };
         let mut blob = key.seal(&secret).unwrap();
         // Flip the first byte of the embedded salt in the blob.
@@ -377,6 +424,42 @@ mod tests {
             matches!(result, Err(SecretError::Open(_))),
             "tampered salt must yield wrong key → AEAD tag fail, got: {result:?}",
         );
+    }
+
+    /// ADR-0008 M7 back-compat: deserialize a pre-M7 JSON payload (no
+    /// `provider_kind` field) → provider_kind defaults to `Anthropic`.
+    #[test]
+    fn endpoint_secret_back_compat() {
+        let json = r#"{"endpoint":"https://api.anthropic.com","api_key":"sk-test","model":"claude-opus-4-7"}"#;
+        let secret: EndpointSecret = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(
+            secret.provider_kind,
+            ProviderKind::Anthropic,
+            "missing provider_kind must default to Anthropic"
+        );
+        assert_eq!(secret.endpoint, "https://api.anthropic.com");
+    }
+
+    /// ADR-0008 M7 forward-compat: serialize an `EndpointSecret` with
+    /// `provider_kind: Openai` → deserialize → round-trip preserves the kind.
+    #[test]
+    fn endpoint_secret_forward_compat() {
+        let original = EndpointSecret {
+            endpoint: "https://api.openai.com/v1".to_string(),
+            api_key: "sk-openai".to_string(),
+            model: "gpt-5".to_string(),
+            provider_kind: ProviderKind::Openai,
+        };
+        let json = serde_json::to_string(&original).expect("serialize");
+        let recovered: EndpointSecret = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            recovered.provider_kind,
+            ProviderKind::Openai,
+            "Openai kind must round-trip"
+        );
+        assert_eq!(recovered.endpoint, original.endpoint);
+        assert_eq!(recovered.api_key, original.api_key);
+        assert_eq!(recovered.model, original.model);
     }
 
     /// Verify that a too-short blob returns `SecretError::Malformed`.
@@ -404,9 +487,11 @@ mod tests {
     fn bench_argon2id_derive() {
         use std::time::Instant;
 
+        const N: usize = 5;
+        const CEILING_MS: u128 = 2_000;
+
         let passphrase = "bench-test-passphrase-2026";
         let salt = [0xA5u8; 16];
-        const N: usize = 5;
 
         // Warm-up — JIT + page-fault cost shouldn't dominate the first
         // measurement.
@@ -435,7 +520,6 @@ mod tests {
         // Hard ceiling — ADR-0007 + Sarah v3 v0.3.x gate. Release mode.
         // Debug mode may legitimately exceed this; the #[ignore] gate
         // is the discipline boundary.
-        const CEILING_MS: u128 = 2_000;
         assert!(
             median_ms <= CEILING_MS,
             "Argon2id derive median {median_ms} ms exceeds {CEILING_MS} ms ceiling \

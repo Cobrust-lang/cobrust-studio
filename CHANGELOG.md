@@ -4,6 +4,21 @@ All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+### Added
+
+- **M7 multi-provider /login (ADR-0008 Phase 2)** — `LoginRequest`
+  + `EndpointSecret` gain a `provider_kind` field (Anthropic /
+  OpenAI / Synthetic) defaulting to Anthropic for v0.2.x back-compat.
+  The SvelteKit `/login` form adds a Provider dropdown with URL-based
+  auto-suggest (Svelte 5 `$effect`). Dispatch `resolve_router()` selects
+  `AnthropicProvider` or `OpenAiProvider` at runtime based on the sealed
+  `provider_kind`; `Synthetic` returns 503 as defense-in-depth.
+  `--dev-provider-kind <KIND>` CLI flag + `COBRUST_DEV_PROVIDER_KIND` env
+  var extend the `--dev-api-key` headless path. Closes Sarah v3 audit
+  finding #3 ("multi-provider /login is a v0.3.x blocker"). 6 integration
+  tests gate the round-trip (wiremock Anthropic + OpenAI stubs). References
+  ADR-0008.
+
 ### Changed
 
 - **README** rewritten for v0.2.1 posture — replaces v0.1.2 status

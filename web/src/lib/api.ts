@@ -135,16 +135,21 @@ export async function setEndpoint(blob: EncryptedBlob): Promise<{ status: string
 }
 
 /**
- * M6 login (ADR-0007). Server derives an Argon2id key from `passphrase`,
- * AEAD-seals `(endpoint, api_key, model)` with AES-256-GCM, and stashes
- * the in-memory `SessionKey` for the run. The plaintext payload travels
- * over TLS/localhost; the server never persists it.
+ * M6 login (ADR-0007) + M7 multi-provider (ADR-0008). Server derives an
+ * Argon2id key from `passphrase`, AEAD-seals `(endpoint, api_key, model,
+ * provider_kind)` with AES-256-GCM, and stashes the in-memory `SessionKey`
+ * for the run. The plaintext payload travels over TLS/localhost; the server
+ * never persists it.
+ *
+ * `provider_kind` defaults to `"anthropic"` on the server side when omitted
+ * (v0.2.x back-compat), but the SvelteKit form always sends it explicitly.
  */
 export async function login(payload: {
 	endpoint: string;
 	api_key: string;
 	model: string;
 	passphrase: string;
+	provider_kind: 'anthropic' | 'openai';
 }): Promise<{ status: string }> {
 	return jsonPost<typeof payload, { status: string }>('/api/login', payload);
 }

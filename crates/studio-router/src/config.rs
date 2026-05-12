@@ -39,9 +39,17 @@ pub enum Strategy {
 /// doubles); it never appears in user-on-disk `studio.toml` because no wire
 /// protocol matches it. Recorded in `LedgerEntry::provider_kind` for honest
 /// provenance.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+///
+/// ## M7 addition (ADR-0008)
+///
+/// `Default` is `Anthropic` so that `#[serde(default)]` on
+/// `EndpointSecret::provider_kind` and `LoginRequest::provider_kind` in
+/// `studio-server` yields `Anthropic` when the field is absent from the JSON
+/// payload — preserving backward compatibility with v0.2.x callers.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
+    #[default]
     Anthropic,
     Openai,
     Synthetic,
