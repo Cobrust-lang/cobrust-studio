@@ -24,6 +24,11 @@ web/node_modules/
 web/.svelte-kit/
 web/build/
 
+# Playwright (web/ tests added in M2 TEST)
+web/test-results/
+web/playwright-report/
+web/blob-report/
+
 # SQLite runtime
 *.db
 *.db-journal

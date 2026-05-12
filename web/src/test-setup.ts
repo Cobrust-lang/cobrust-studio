@@ -11,10 +11,7 @@
  */
 import { webcrypto } from 'node:crypto';
 
-if (
-	typeof globalThis.crypto === 'undefined' ||
-	typeof globalThis.crypto.subtle === 'undefined'
-) {
+if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.subtle === 'undefined') {
 	// jsdom didn't expose subtle — supplement with Node's webcrypto.
 	Object.defineProperty(globalThis, 'crypto', {
 		value: webcrypto,

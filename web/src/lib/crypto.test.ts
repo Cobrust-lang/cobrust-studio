@@ -162,11 +162,7 @@ describe('encryptEndpointBlob — round trip', () => {
 		// be sure we corrupt the message, not just the tag).
 		tampered[0] = tampered[0] ^ 0x01;
 		await expect(
-			crypto.subtle.decrypt(
-				{ name: 'AES-GCM', iv: fromBase64(blob.nonce) },
-				key,
-				tampered
-			)
+			crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromBase64(blob.nonce) }, key, tampered)
 		).rejects.toThrow();
 	});
 
@@ -180,11 +176,7 @@ describe('encryptEndpointBlob — round trip', () => {
 		// all zeros — guaranteed != random; ArrayBuffer-backed for strict TS.
 		const wrongNonce = new Uint8Array(new ArrayBuffer(12));
 		await expect(
-			crypto.subtle.decrypt(
-				{ name: 'AES-GCM', iv: wrongNonce },
-				key,
-				fromBase64(blob.ciphertext)
-			)
+			crypto.subtle.decrypt({ name: 'AES-GCM', iv: wrongNonce }, key, fromBase64(blob.ciphertext))
 		).rejects.toThrow();
 	});
 });

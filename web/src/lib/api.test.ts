@@ -118,10 +118,7 @@ describe('listAdrs', () => {
 	});
 
 	it('throws ApiError with the {error, code} envelope on non-2xx', async () => {
-		mockJsonResponse(
-			{ error: 'store unavailable', code: 'store_io' },
-			{ status: 500 }
-		);
+		mockJsonResponse({ error: 'store unavailable', code: 'store_io' }, { status: 500 });
 		await expect(listAdrs()).rejects.toMatchObject({
 			name: 'ApiError',
 			status: 500,
@@ -361,13 +358,8 @@ describe('dispatchSse — pre-stream errors', () => {
 	});
 
 	it('throws ApiError on 400 invalid_body', async () => {
-		mockJsonResponse(
-			{ error: 'model required', code: 'invalid_body' },
-			{ status: 400 }
-		);
-		await expect(
-			collect({ model: '', messages: [] })
-		).rejects.toMatchObject({
+		mockJsonResponse({ error: 'model required', code: 'invalid_body' }, { status: 400 });
+		await expect(collect({ model: '', messages: [] })).rejects.toMatchObject({
 			name: 'ApiError',
 			status: 400,
 			code: 'invalid_body'
