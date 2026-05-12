@@ -1,7 +1,7 @@
 ---
 doc_kind: module
 module_id: studio-server
-last_verified_commit: abfd1c7
+last_verified_commit: 3b56d0e
 dependencies: [adr:0001, adr:0002, adr:0003, adr:0006]
 ---
 
@@ -201,11 +201,82 @@ crates/studio-server/src/
     └── version.rs       # GET /api/version
 ```
 
+### Wave M3 (as-built, verified against `crates/studio-server/src/`)
+
+Single-binary deployment per ADR-0002. The release binary bakes the
+SvelteKit static export under `web/build/` via `rust-embed`, served
+from memory by Axum so the user-journey "download tarball, run
+binary, open browser" requires no static-file path, no nginx, no
+volume mount.
+
+New file `crates/studio-server/src/embed.rs`:
+
+```text
+WebAssets struct        — #[derive(RustEmbed)] folder = "../../web/build/",
+                          allow_missing = true (so `cargo build` in a fresh
+                          checkout without pnpm-build does not fail).
+serve_index             — Axum handler bound to `GET /`; serves
+                          index.html (or DEV_STUB_HTML if web/build/ is
+                          empty).
+serve_asset(Path)       — Axum handler bound as `Router::fallback`; serves
+                          the embedded path with SPA fallback to
+                          index.html, then dev-stub fallback if missing.
+DEV_STUB_HTML           — static HTML const explaining how to populate
+                          the embed (links to scripts/build-release.sh
+                          and `pnpm --dir web dev`).
+```
+
+MIME types come from rust-embed's stamped `EmbeddedFile.metadata
+.mimetype()` — the `mime-guess` crate feature pre-resolves at embed
+time, so the handler does not need a direct `mime_guess` dep.
+
+Wave-A4's flat `build_router` with a single JSON 404 fallback is
+refactored. `app.rs` now ships:
+
+```text
+fn api_router() -> Router<AppState>   — /api/* surface only, with
+                                        the JSON-404 fallback
+                                        (`api_not_found`).
+fn build_router(state) -> Router      — nests api_router under /api,
+                                        binds GET / to embed::serve_index,
+                                        sets Router::fallback to
+                                        embed::serve_asset, then layers
+                                        TraceLayer + CorsLayer::permissive.
+```
+
+This preserves the M2 frontend contract that `/api/typo` returns JSON
+`{"error":"route not found","code":"not_found"}` while every non-`/api`
+path returns the SPA shell (or the dev stub).
+
+Build-pipeline integration via `scripts/build-release.sh`:
+
+```text
+pnpm install --frozen-lockfile      (in web/)
+pnpm run build                      (SvelteKit → web/build/)
+cargo build --release --workspace --locked
+```
+
+Output: `target/release/cobrust-studio`, ~9 MiB on darwin-arm64 with
+the M3 ADR/finding bundle baked in.
+
+Dogfood smoke via `scripts/smoke-dogfood.sh`:
+
+```text
+boot:  $BIN serve --project $REPO --port $PORT
+assert: GET /api/health  → status == "ok"
+assert: GET /api/adr     → .adrs | length >= 6
+assert: GET /            → body starts with HTML
+cleanup: trap-kill on exit
+```
+
+Verified locally (commit 3b56d0e): release build produces the binary,
+smoke run with PORT=37878 PASSes — Studio sees its own 6 constitutional
+ADRs (0001..0006) via the same HTTP surface the M2 frontend uses.
+
 ### Wave A6+ extensions
 
 - Per-`Chunk` SSE streaming on `/api/dispatch` (requires plumbing
   `LlmProvider::complete_stream` through `studio_router::Router`).
-- `embed.rs` — rust-embed for `web/build/` (M3 dogfood).
 - M2 auth flow — real AEAD decryption replaces the A5 raw-bytes
   EncryptedBlob stub in `router_init::resolve_api_key`.
 

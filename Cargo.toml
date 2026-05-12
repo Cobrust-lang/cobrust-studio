@@ -62,6 +62,10 @@ clap = { version = "4", features = ["derive"] }
 # A4 — added for studio-server (Wave A4 routes):
 # base64 for EncryptedBlob wire transport on /api/auth/set-endpoint.
 base64 = "0.22"
+# M3 — added for studio-server single-binary embedding (ADR-0002).
+# `mime-guess` feature pulls in `mime_guess` so handlers can resolve
+# Content-Type from the embedded path without an extra workspace dep.
+rust-embed = { version = "8", features = ["mime-guess"] }
 
 [profile.release]
 lto = "thin"
