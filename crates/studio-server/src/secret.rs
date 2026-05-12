@@ -62,13 +62,25 @@ const MIN_BLOB_LEN: usize = HEADER_LEN + 16;
 /// Cloning is intentional — the 32-byte key is small and the `RwLock` read
 /// path clones it out so subsequent dispatches do not hold the lock during
 /// crypto operations.
+/// AEAD session key + the salt it was derived with.
+///
+/// `seal()` must pack `self.salt` into the blob (not a fresh random salt) so
+/// that a subsequent `derive(passphrase, blob[..16])` reproduces this same
+/// key — that's the round-trip path login.rs takes on the wrong-passphrase
+/// check + on binary restart.
 #[derive(Clone)]
-pub struct SessionKey([u8; 32]);
+pub struct SessionKey {
+    key: [u8; 32],
+    salt: [u8; 16],
+}
 
 impl std::fmt::Debug for SessionKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Never print the key bytes. Debug renders only a redacted marker.
-        f.debug_tuple("SessionKey").field(&"[REDACTED]").finish()
+        f.debug_struct("SessionKey")
+            .field("key", &"[REDACTED]")
+            .field("salt", &"[REDACTED]")
+            .finish()
     }
 }
 
@@ -96,15 +108,21 @@ impl SessionKey {
         argon2
             .hash_password_into(passphrase.as_bytes(), salt, &mut key_bytes)
             .map_err(SecretError::Kdf)?;
-        Ok(Self(key_bytes))
+        Ok(Self {
+            key: key_bytes,
+            salt: *salt,
+        })
     }
 
     /// Seal `payload` into the packed `salt || nonce || ciphertext+tag` wire
     /// format (ADR-0007 §"Decision" §"Storage wire format").
     ///
-    /// Generates a fresh 16-byte salt and 12-byte nonce from [`OsRng`] on each
-    /// call. The caller stores the returned `Vec<u8>` as
-    /// `EncryptedBlob.ciphertext` with `scheme = SCHEME`.
+    /// Packs **`self.salt`** (the salt this key was derived with) into the
+    /// blob header — NOT a fresh random salt — so a subsequent
+    /// `SessionKey::derive(passphrase, blob[..16])` reproduces this exact
+    /// key. The 12-byte nonce IS freshly random per seal (AES-GCM requires
+    /// nonce uniqueness; reusing nonces would catastrophically break the
+    /// cipher).
     ///
     /// # Errors
     /// Returns [`SecretError::Seal`] if the AEAD encryption fails.
@@ -112,13 +130,10 @@ impl SessionKey {
         let json = serde_json::to_vec(payload)
             .map_err(|e| SecretError::Seal(format!("json encode: {e}")))?;
 
-        let mut salt = [0u8; SALT_LEN];
-        OsRng.fill_bytes(&mut salt);
-
         let mut nonce_bytes = [0u8; NONCE_LEN];
         OsRng.fill_bytes(&mut nonce_bytes);
 
-        let key = Key::<Aes256Gcm>::from_slice(&self.0);
+        let key = Key::<Aes256Gcm>::from_slice(&self.key);
         let cipher = Aes256Gcm::new(key);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
@@ -127,8 +142,11 @@ impl SessionKey {
             .map_err(|e| SecretError::Seal(e.to_string()))?;
 
         // Pack: salt(16) || nonce(12) || ciphertext+tag
+        // Salt is self.salt — the same salt this key was derived with, so
+        // RE-DERIVE on next login (read blob[..16], derive(passphrase, that))
+        // reproduces self exactly.
         let mut blob = Vec::with_capacity(HEADER_LEN + ciphertext.len());
-        blob.extend_from_slice(&salt);
+        blob.extend_from_slice(&self.salt);
         blob.extend_from_slice(&nonce_bytes);
         blob.extend_from_slice(&ciphertext);
         Ok(blob)
@@ -157,7 +175,7 @@ impl SessionKey {
         let nonce_bytes = &blob[SALT_LEN..HEADER_LEN];
         let ciphertext = &blob[HEADER_LEN..];
 
-        let key = Key::<Aes256Gcm>::from_slice(&self.0);
+        let key = Key::<Aes256Gcm>::from_slice(&self.key);
         let cipher = Aes256Gcm::new(key);
         let nonce = Nonce::from_slice(nonce_bytes);
 
@@ -226,7 +244,44 @@ mod tests {
         let salt = [0x42u8; 16];
         let k1 = SessionKey::derive(passphrase, &salt).unwrap();
         let k2 = SessionKey::derive(passphrase, &salt).unwrap();
-        assert_eq!(k1.0, k2.0, "same inputs must yield same key");
+        assert_eq!(k1.key, k2.key, "same inputs must yield same key");
+        assert_eq!(k1.salt, k2.salt, "same inputs must yield same salt");
+    }
+
+    /// Seal then RE-DERIVE then open — the round-trip login.rs actually uses.
+    ///
+    /// Regression test for the M6 wrong-passphrase-false-positive bug: seal()
+    /// must pack `self.salt` into the blob so `derive(passphrase, blob[..16])`
+    /// reproduces the same key. The original P9 implementation generated a
+    /// fresh random salt inside seal() → packed_salt did NOT match
+    /// derive_salt → re-derive produced a different key → open failed → all
+    /// subsequent logins with the correct passphrase reported wrong_passphrase.
+    #[test]
+    fn seal_then_re_derive_then_open_round_trips() {
+        let passphrase = "re-derive-test-m6";
+        let salt = [0x77u8; 16];
+        let key1 = SessionKey::derive(passphrase, &salt).unwrap();
+        let secret = EndpointSecret {
+            endpoint: "https://api.anthropic.com".to_string(),
+            api_key: "sk-rederive".to_string(),
+            model: "claude-opus-4-7".to_string(),
+        };
+        let blob = key1.seal(&secret).unwrap();
+
+        // The packed salt MUST equal the derive salt (the whole point of the fix).
+        assert_eq!(&blob[..16], &salt, "packed salt must equal derive salt");
+
+        // Simulate the login.rs wrong-passphrase-check / restart-recovery path:
+        // read salt from blob, re-derive, open.
+        let mut blob_salt = [0u8; 16];
+        blob_salt.copy_from_slice(&blob[..16]);
+        let key2 = SessionKey::derive(passphrase, &blob_salt).unwrap();
+        assert_eq!(key1.key, key2.key, "re-derive must reproduce key");
+
+        let recovered = key2.open(&blob).expect("re-derived key must open");
+        assert_eq!(recovered.endpoint, secret.endpoint);
+        assert_eq!(recovered.api_key, secret.api_key);
+        assert_eq!(recovered.model, secret.model);
     }
 
     /// Verify the full AES-GCM round-trip: seal then open returns the original.
