@@ -12,7 +12,7 @@ tree stays plain markdown editable by `vim`.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-blue.svg)](#license)
 [![Release](https://img.shields.io/github/v/release/Cobrust-lang/cobrust-studio?label=release)](https://github.com/Cobrust-lang/cobrust-studio/releases)
-[![Stage](https://img.shields.io/badge/stage-v0.1.3%20early-orange.svg)](CHANGELOG.md)
+[![Stage](https://img.shields.io/badge/stage-v0.2.0%20early-orange.svg)](CHANGELOG.md)
 [![ADSD](https://img.shields.io/badge/methodology-ADSD-blue)](https://github.com/Cobrust-lang/agent-driven-development)
 
 </div>

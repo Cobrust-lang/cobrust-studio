@@ -4,71 +4,157 @@ All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-05-12
+
+**M6 AEAD round-trip release.** The `/login → dispatch` flow is end-to-end:
+the SvelteKit form POSTs `(endpoint, api_key, model, passphrase)` to a new
+`/api/login` route, the server runs Argon2id + AES-256-GCM to seal the
+credentials in `session_kv`, and dispatch decrypts on every call from the
+in-memory `SessionKey`. The `ANTHROPIC_API_KEY` env-var workaround is no
+longer required (Sarah v2 pilot-gate #2 closed). The windows-latest test
+matrix is now green end-to-end (pilot-gate #3 — code is ready; this is
+the first tag that ships all 5 platforms after the windows-CI hardening).
+
 ### Added
 
-- **M6 — AEAD round-trip complete (ADR-0007 Phase 2)**:
-  The `/login → dispatch` round-trip is fully implemented. Summary of
-  deliverables:
-  - **`crates/studio-server/src/secret.rs`** — `SessionKey` / `EndpointSecret`
-    / `SecretError`. AES-256-GCM + Argon2id (m=64MiB / t=3 / p=1). Wire
-    format: packed `salt(16) || nonce(12) || ciphertext+tag` under scheme
-    `"aes-gcm-256/argon2id-v1"`. 6 unit tests in `#[cfg(test)]` (deterministic
-    KDF, round-trip, wrong passphrase, tampered ciphertext, tampered salt,
-    malformed blob).
-  - **`POST /api/login`** — derives Argon2id key, seals credentials, writes
-    `session_kv`, stores `SessionKey` in `AppState`.
-  - **`POST /api/logout`** — drops in-memory key.
-  - **`GET /api/session/status`** — returns `{ authenticated: bool }`.
-  - **`GET /api/session/endpoint`** — debug-only (`--debug-session`), decrypted
-    endpoint+model (never api_key).
-  - **`AppState.session_key`** — `Arc<RwLock<Option<SessionKey>>>`, init `None`.
-  - **Dispatch integration** — `resolve_router()` checks `session_key` first;
-    decrypts blob + builds per-request `AnthropicProvider`. Falls through to
-    static `studio.toml` router. Returns 503 when both absent.
-  - **`--dev-api-key` / `--dev-endpoint` / `--dev-model`** CLI flags + matching
-    `COBRUST_DEV_*` env vars. `--debug-session` flag. Boot-time injection for
-    CI/Playwright/headless flows.
-  - **3 integration tests** in `tests/secret_roundtrip.rs` (un-ignored):
-    `login_then_dispatch_with_in_memory_key`, `restart_drops_key_returns_401`,
-    `wrong_passphrase_login_returns_401`. Use wiremock for hermetic Anthropic stub.
-  - **Playwright E2E** spec `web/tests/e2e/login-aead.spec.ts` — session status
-    + login + logout API-level assertions.
-  - **Docs** — `docs/human/zh/secret-storage.md` + `docs/human/en/secret-storage.md`
-    (zh/en parity); `docs/agent/modules/studio-server.md` M6 section.
-  - **README** — "Configuration" section documenting `/login` as primary flow +
-    `--dev-api-key` as explicit opt-in. "Known limitations" env-var workaround
-    line removed.
-  - **smoke-dogfood.sh** — step `[5/5] POST /api/login + GET /api/session/status`.
-  Closes Sarah v2 pilot-gate #2 ("AEAD round-trip ships, env-var workaround
-  removed") and addresses Mei v2 R3 confidence-blocker (README posture). ADR-0007
-  Phase 2 (P9 dispatch). Workspace gains `aes-gcm`, `argon2`, `rand_core` deps.
+- **M6 AEAD round-trip (ADR-0007 Phase 2)** — full `/login → dispatch`
+  implementation:
+  - **`crates/studio-server/src/secret.rs`** — `SessionKey` /
+    `EndpointSecret` / `SecretError`. AES-256-GCM + Argon2id
+    (m=64MiB / t=3 / p=1). Wire format: packed
+    `salt(16) || nonce(12) || ciphertext+tag` under scheme
+    `"aes-gcm-256/argon2id-v1"`. 7 unit tests including
+    `seal_then_re_derive_then_open_round_trips` which locks the salt-
+    reuse contract that the original 6 tests did not exercise (see
+    §Fixed: "seal() salt mismatch" below).
+  - **Routes**: `POST /api/login`, `POST /api/logout`,
+    `GET /api/session/status`, `GET /api/session/endpoint`
+    (debug-only, gated by `--debug-session`).
+  - **`AppState.session_key`** — `Arc<RwLock<Option<SessionKey>>>`,
+    `None` at boot.
+  - **Dispatch integration** — `resolve_router()` checks `session_key`
+    first; decrypts blob + builds per-request `AnthropicProvider`.
+    Falls through to static `studio.toml` router. Returns 503 when both
+    absent (backward compat preserved).
+  - **`--dev-api-key` / `--dev-endpoint` / `--dev-model`** CLI flags +
+    matching `COBRUST_DEV_*` env vars. `--debug-session` flag. Boot-time
+    injection for CI / Playwright / headless flows.
+  - **SvelteKit `/login` page rewrite** — adds a 4th input (Passphrase
+    ≥ 8 chars), POSTs to `/api/login` (not the M2 `/api/auth/set-endpoint`
+    stub), renames the button "Save endpoint" → "Unlock session".
+  - **3 integration tests** in `tests/secret_roundtrip.rs`:
+    `login_then_dispatch_with_in_memory_key` (wiremock Anthropic stub),
+    `restart_drops_key_returns_401`, `wrong_passphrase_login_returns_401`,
+    plus `short_passphrase_login_returns_400` (Sarah v3 #3 regression
+    lock).
+  - **Playwright E2E specs** — `login-aead.spec.ts` (API-level session
+    + logout) and rewritten `login.spec.ts` (drives the SvelteKit form
+    end-to-end + asserts `/api/login` plaintext shape + redirect to
+    `/adr`).
+  - **Docs** — `docs/human/{zh,en}/secret-storage.md` (zh/en parity);
+    `docs/agent/modules/studio-server.md` Wave M6 section + SHA stamp.
+  - **README** — new "Configuration" section documenting `/login` as
+    primary flow + `--dev-api-key` as explicit opt-in. "Known
+    limitations" `ANTHROPIC_API_KEY` workaround line removed.
+  - **`scripts/smoke-dogfood.sh`** — new step `[5/5] POST /api/login +
+    GET /api/session/status`.
+  - **Workspace deps**: `aes-gcm`, `argon2`, `rand_core` added.
 
-- **ADR-0007 — secret-storage AEAD round-trip (M6, Phase 1 spike)**:
-  Binding design for the `/login → dispatch` round-trip closure.
-  Picks AES-256-GCM + Argon2id (m=64MiB / t=3 / p=1) with packed
-  `salt ‖ nonce ‖ ciphertext` wire format under
-  `scheme="aes-gcm-256/argon2id-v1"`. Phase 1 (ADR + test skeleton).
+- **ADR-0007 (status: accepted)** — secret-storage AEAD round-trip
+  decision. Documents algorithm pin (AES-256-GCM + Argon2id v1), wire
+  format, the 4 options considered (client-side WebCrypto, server-side
+  derive, disk-key file, no encryption), the in-scope vs out-of-scope
+  threat model, and the falsifiable Done-means criteria. Phase 1 CTO
+  spike at `cef7810`; Phase 2 P9 dispatch merged at `dd0b181`; status
+  flipped to accepted at `b18418c`.
 
-- **`Store::close() -> async ()`** — explicit SqlitePool shutdown
-  for tests that unlink the db file. No-op on Unix (where unlink
-  semantics allow open-file delete); mandatory on Windows-CI.
+- **`Store::close() -> async ()`** — explicit SqlitePool shutdown helper
+  for tests that unlink the db file. No-op on Unix (unlink semantics
+  allow open-file delete); mandatory on Windows-CI where the OS holds
+  exclusive file locks until every handle closes.
+
+- **ADSD methodology back-port** (cross-repo) — catalogue v1.2.6 lands
+  in [Cobrust-lang/agent-driven-development](https://github.com/Cobrust-lang/agent-driven-development)
+  with 6 new entries (F25-F28 + F1.3/F1.4) extracted from Studio's M4/M5
+  experience: tag→audit→patch pattern, recursive enforcement-script
+  closure, continuous persona testing as dev-loop primitive, persona-as-
+  validation epistemic risk, local-vs-CI gate definition drift, README-
+  vs-release-tag drift. Studio is the **N=2 ADSD case study**.
 
 ### Fixed
 
-- **Windows-CI cargo test reliability** — two bugs the new
-  `windows-latest` matrix surfaced on first run:
-  - `studio-store cold_start_index_rebuild` panicked at
-    `fs::remove_file` with NT error 32 ("file in use by another
-    process") because sqlx pool shutdown is async; `Drop` alone
-    does not await it. Fixed by calling `Store::close().await`
-    before the unlink in the two affected tests.
-  - `studio-server dispatch_synthetic_route` panicked at
-    `RouterConfig::from_toml_str` because Windows tempdir paths
-    contain backslashes that TOML `"..."` strings interpret as
-    escape sequences. Fixed by normalizing to forward-slash via
-    `.to_string_lossy().replace('\\', "/")` before interpolation.
-  Both fixes target Sarah v2 pilot-gate #3 ("v0.1.4+ ships all 5
-  platforms green-first-time").
+- **`SessionKey::seal()` salt mismatch (M6 P9 implementation bug)** —
+  the original implementation generated a **fresh random salt on every
+  seal() call** and packed it into the blob header, but used the
+  `SessionKey` derived from a **different** salt at login time. Result:
+  packed_salt did not match derive_salt → any subsequent
+  `derive(passphrase, blob[..16])` produced a different key → AEAD tag
+  mismatch → false-positive `wrong_passphrase` 400 on every re-login
+  with the correct passphrase. Symptom: Playwright login-aead.spec.ts
+  test 2 + integration test `restart_drops_key_returns_401` reported
+  `authenticated=false` after a valid re-login. **Root cause**: ADR-0007
+  §"Wire format" stated "packed salt enables re-derive" but the P9 test
+  corpus only ran `key.seal(); key.open()` (no re-derive) so the bug
+  was structurally invisible to the test suite. Textbook ADSD F1.0
+  (declared-invariant gap). Fix: `SessionKey` now carries its
+  `derive_salt`; `seal()` packs `self.salt` (not a fresh random salt).
+  Nonce remains fresh per seal (AES-GCM uniqueness requirement). New
+  test `seal_then_re_derive_then_open_round_trips` locks the contract.
+
+- **Server-side passphrase strength validation** (Sarah v3 audit #3) —
+  SvelteKit form enforced `passphrase.length < 8` client-side but the
+  server only checked `is_empty()`. A direct `curl POST /api/login`
+  with a 1-char passphrase succeeded server-side, bypassing the
+  minimum-strength bar. Server now returns 400
+  `{code: "passphrase_too_short"}` for `len() < 8`. New integration
+  test `short_passphrase_login_returns_400` locks the regression.
+
+- **Windows-CI `cold_start_index_rebuild` test reliability** —
+  `Store::close().await` alone is insufficient on Windows: sqlx pool
+  graceful shutdown resolves, but the OS-level file handle (esp. SQLite
+  WAL mmap regions) can take a few ms to release. Added a
+  `windows_safe_remove_file()` retry helper with exponential backoff
+  (10/20/40/80/160/320 ms, ~600 ms total). No-op on Unix where unlink
+  semantics tolerate open handles.
+
+- **Windows-CI `dispatch_synthetic_route` TOML escape** — Windows
+  tempdir paths contain backslashes that TOML `"..."` strings interpret
+  as escape sequences (`C:\Users\...` fails parse). Normalized to
+  forward-slash via `.to_string_lossy().replace('\\', "/")` before
+  interpolation.
+
+- **Playwright e2e passphrase coordination** — login.spec.ts and
+  login-aead.spec.ts initially used different passphrases against the
+  same persistent `session_kv` blob. With the seal/derive salt fix
+  above this is no longer strictly required, but the alignment to a
+  single `playwright-test-passphrase-m6` constant prevents test-order
+  drift in future additions.
+
+### Changed
+
+- **`Cargo.toml` workspace.package.version** — `0.1.3` → `0.2.0`.
+  M6 is a minor bump (new public API surface: `secret` module +
+  3 new routes + `AppState.session_key` field + 4 new CLI flags).
+
+- **`docs/agent/modules/studio-server.md::last_verified_commit`** —
+  `7507757` → `3753a2b` (post-seal-salt-fix verification anchor;
+  F20 enforced by `scripts/doc-coverage.sh`).
+
+### Methodology firsts (this cycle)
+
+- First **two-phase dispatch SOP** application end-to-end on a single
+  feature (ADR-0007 spike → test skeleton → P9 worktree dispatch →
+  CTO 守闸 → merge --no-ff). Documented as Studio's contribution to
+  ADSD §"Workflow Discipline."
+- First **continuous persona testing v3** cycle — Sarah v1 (pilot-
+  ready verdict) → v2 (3 pilot-gates) → v3 (gate #2 closed, gate #3
+  one-tag-away). Used to catalogue ADSD F27 (continuous persona dev-
+  loop) and F28 (persona-as-validation epistemic risk).
+- First **bug surfaced by persona-test-driven E2E run** that the
+  unit test corpus structurally missed: the seal/derive salt mismatch.
+  Demonstrates why test corpus + persona test corpus + e2e are
+  orthogonal layers (ADSD §"Deep-source-read" / §"Persona" coverage
+  table).
 
 ## [0.1.3] — 2026-05-12
 
