@@ -70,7 +70,7 @@ if [ "$ready" -eq 0 ]; then
     exit 1
 fi
 
-echo "[1/3] GET /api/health"
+echo "[1/4] GET /api/health"
 HEALTH=$(curl -fsSL "http://127.0.0.1:$PORT/api/health")
 echo "$HEALTH" | jq .
 STATUS=$(echo "$HEALTH" | jq -r '.status')
@@ -80,7 +80,7 @@ if [ "$STATUS" != "ok" ]; then
 fi
 echo ""
 
-echo "[2/3] GET /api/adr"
+echo "[2/4] GET /api/adr"
 ADR_RESP=$(curl -fsSL "http://127.0.0.1:$PORT/api/adr")
 COUNT=$(echo "$ADR_RESP" | jq '.adrs | length')
 echo "  count: $COUNT"

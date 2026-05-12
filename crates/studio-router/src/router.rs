@@ -320,8 +320,7 @@ impl Router {
                 // `unwrap_or(Equal)` is therefore unreachable in
                 // practice but cheaper than an `.expect()` in the
                 // hot dispatch path. (Aleksandr v2 nit — M5.5 cycle.)
-                indexed
-                    .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                indexed.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
                 indexed
                     .into_iter()
                     .map(|(_, idx)| self.preferred[idx].clone())

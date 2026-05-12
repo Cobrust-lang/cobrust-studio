@@ -12,7 +12,7 @@ tree stays plain markdown editable by `vim`.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-blue.svg)](#license)
 [![Release](https://img.shields.io/github/v/release/Cobrust-lang/cobrust-studio?label=release)](https://github.com/Cobrust-lang/cobrust-studio/releases)
-[![Stage](https://img.shields.io/badge/stage-v0.1.2%20early-orange.svg)](CHANGELOG.md)
+[![Stage](https://img.shields.io/badge/stage-v0.1.3%20early-orange.svg)](CHANGELOG.md)
 [![ADSD](https://img.shields.io/badge/methodology-ADSD-blue)](https://github.com/Cobrust-lang/agent-driven-development)
 
 </div>
@@ -166,7 +166,7 @@ specs.
 - ✅ `scripts/smoke-dogfood.sh` end-to-end smoke (6 constitutional ADRs visible via `/api/adr`)
 - ✅ doc-coverage CI gate enforces 6 invariants (crate agent-docs / zh-en parity / ADR frontmatter / ADR id monotonic / `last_verified_commit` is a real git SHA / cargo test exit 0 AND 0 FAILED groups)
 - ✅ 5 findings filed (3 closed + 2 closed by the post-tag M4 audit)
-- ⚠️ Single-platform tarball (macos arm64); linux pending CI matrix
+- ✅ Multi-platform tarballs in v0.1.3+ (linux x86_64 + aarch64, macOS arm64; macOS x86_64 + windows in 5-platform release.yml matrix)
 - ⚠️ `/login` UI is a credential-blob stub; env var is the actual auth path today
 - ⚠️ Single-user / single-project by design — no RBAC, no multi-tenancy in v0.1.x
 - ⚠️ Bus factor 1 (looking for design partners — see below)

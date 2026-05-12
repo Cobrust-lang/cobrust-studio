@@ -105,6 +105,20 @@ for fnd in docs/agent/findings/*.md; do
 done
 ok "M0 — last_verified_commit is a real SHA (F20 enforced)"
 
+# --- 5b. cargo fmt --check — catches local-vs-CI fmt drift before push ---
+# Sarah-v2 caught v0.1.3 CI fmt failure because local 6-gate didn't run
+# fmt. Adding here as §5b (not §6 — that's the test gate) so the script
+# enforces the same fmt bar CI does.
+if command -v cargo >/dev/null 2>&1; then
+    if cargo fmt --all -- --check >/dev/null 2>&1; then
+        ok "M0 — cargo fmt --check clean"
+    else
+        echo "doc-coverage: FAIL — cargo fmt --check found drift; run \`cargo fmt --all\`" >&2
+        cargo fmt --all -- --check 2>&1 | grep -v "^Warning" | head -20 >&2
+        exit 1
+    fi
+fi
+
 # --- 6. Test gate — script-enforces "no FAILED test groups" (M4.1 ---
 #         closes cto-shougate-test-gate-grep-leak finding).
 # Prior CTO 守闸 SOP used `grep "^test result" | wc -l` which counts
