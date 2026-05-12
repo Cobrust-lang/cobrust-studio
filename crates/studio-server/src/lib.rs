@@ -25,9 +25,11 @@
 pub mod app;
 pub mod cli;
 pub mod error;
+pub mod router_init;
 pub mod routes;
 pub mod sse;
 pub mod state;
+pub mod synthetic;
 
 use std::net::SocketAddr;
 
@@ -40,7 +42,8 @@ pub use crate::cli::{Cli, Command, ServeArgs};
 pub use crate::error::RouteError;
 pub use crate::routes::{HealthResponse, VersionResponse};
 pub use crate::sse::{EventEnvelope, EventHub, SSE_BUFFER_CAP};
-pub use crate::state::AppState;
+pub use crate::state::{AppState, DispatchContext};
+pub use crate::synthetic::SyntheticProvider;
 
 /// Crate version exposed via the `/api/version` route.
 #[must_use]
@@ -74,10 +77,13 @@ pub enum ServerError {
 pub async fn serve(args: &ServeArgs) -> Result<(), ServerError> {
     let project_root = args.project.clone();
     let store = Store::open(project_root.clone()).await?;
-    // Wave A4: router stays `None` until A5 wires construction (needs
-    // credentials + `studio.toml`). See ADR-0006 §"Addendum 2026-05-11"
-    // F-01 for the binding contract.
-    let state = AppState::new(store, None, project_root.clone());
+    // Wave A5: try to construct the router from `<project_root>/studio.toml`.
+    // Soft-fail to `None` on any error (missing config, malformed TOML, no
+    // credentials, build failure). See ADR-0006 §"Addendum 2026-05-11" F-01
+    // for the binding contract, and `crate::router_init` for the resolution
+    // order. The `None` path keeps Wave-A4 503 behavior intact.
+    let router = router_init::try_build_router_from_project(&project_root, &store).await?;
+    let state = AppState::new(store, router, project_root.clone());
 
     // Wave A4: spawn the watcher → EventHub bridge before binding the
     // listener so the first connected client never misses an event

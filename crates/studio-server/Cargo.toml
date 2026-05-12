@@ -21,6 +21,9 @@ path = "src/lib.rs"
 [dependencies]
 studio-store = { path = "../studio-store" }
 studio-router = { path = "../studio-router" }
+# A5: async-trait needed for `impl LlmProvider for SyntheticProvider`
+# (the studio-router trait carries `#[async_trait::async_trait]`).
+async-trait.workspace = true
 axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true

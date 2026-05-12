@@ -1,4 +1,4 @@
-//! Shared application state — `AppState`.
+//! Shared application state — `AppState` + per-request `DispatchContext`.
 //!
 //! Wave A3 wires the minimum cross-crate integration required to prove the
 //! Axum app can hold a [`studio_store::Store`] handle and a future
@@ -9,9 +9,14 @@
 //! - [`studio_router::RouterBuilder::build`] requires at least one
 //!   registered provider that matches the parsed
 //!   [`studio_router::RouterConfig`]; A3 has no config file in flight.
-//! - Wave A4 / A5 will plumb the real construction (per ADR-0006
+//! - Wave A5 wires the real construction in [`crate::serve`] per ADR-0006
 //!   §"Addendum 2026-05-11" — `RouterConfig::from_toml_str(&toml)?` +
-//!   `register_provider(...)` + `.build(&cfg).await?`).
+//!   `register_provider(...)` + `.build(&cfg).await?`.
+//!
+//! Wave A5 also lands [`DispatchContext`] (ADR-0006 §"Addendum 2026-05-11"
+//! §F-03) — the caller-supplied newtype that threads `task_tag` (and
+//! future fields: span id, deadline) into the dispatch call site without
+//! bloating [`studio_router::CompletionRequest`]'s wire shape.
 //!
 //! All `AppState` fields are documented; the struct is `Clone` because
 //! Axum needs to hand a copy to each request future, and the underlying
@@ -119,5 +124,43 @@ impl AppState {
     #[must_use]
     pub fn events(&self) -> &EventHub {
         &self.events
+    }
+}
+
+/// Caller-supplied dispatch context.
+///
+/// Per ADR-0006 §"Addendum 2026-05-11" §F-03 the CTO chose Option (c) —
+/// a newtype carried alongside [`studio_router::CompletionRequest`] at
+/// the dispatch call site — over (a) "add field to `CompletionRequest`"
+/// or (b) "second arg `dispatch(req, tag)`". This shape leaves the
+/// router's wire types untouched while giving the server layer an
+/// extension point for future cross-cutting fields (span IDs, deadline
+/// hints, etc.).
+///
+/// Wave A5 only consumes `task_tag` — the studio-router `Router::dispatch`
+/// API today ignores caller-supplied tags (see
+/// `studio_router::router::Router::task_tag_for_request`, which returns
+/// `None`). The Wave-A5 dispatch route therefore records the tag in its
+/// own server-side dispatch log (or future ledger sidecar); plumbing
+/// through router-internal ledger writes is post-M1.
+///
+/// Construct via `DispatchContext::default()` for the no-tag case, or
+/// the field literal `DispatchContext { task_tag: Some("agent-turn".into()) }`
+/// when the caller has a domain label to record.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DispatchContext {
+    /// Free-form caller-supplied tag (e.g. `"agent-turn"`, `"adr-draft"`).
+    /// Mirrors [`studio_router::LedgerEntry::task_tag`] — `None` when the
+    /// caller has no domain label to record.
+    pub task_tag: Option<String>,
+}
+
+impl DispatchContext {
+    /// Construct a context with just a `task_tag` set.
+    #[must_use]
+    pub fn with_task_tag(task_tag: impl Into<String>) -> Self {
+        Self {
+            task_tag: Some(task_tag.into()),
+        }
     }
 }
