@@ -52,11 +52,11 @@ project makes sense:
 
 The methodology itself (ADSD — *Agent-Driven Software Development*) is a
 separate open project distilled from a 9-week run building the Cobrust language
-project: https://github.com/Cobrust-lang/agent-driven-development
+project: https://github.com/Cobrust-lang/agent-driven-development.
 
-Cobrust Studio is the **second case study** for ADSD (the first was Cobrust
-itself, N=1). It both *uses* the methodology and *is* the test of whether the
-methodology survives contact with a new codebase.
+Studio dogfoods ADSD — meaning the same discipline that builds the tool is
+the discipline the tool surfaces. You can read all the methodology in the
+ADSD repo above without ever installing Studio.
 
 ---
 
@@ -173,42 +173,23 @@ specs.
 
 ---
 
-## Honest status
-
-This is a 5-day MVP (built 2026-05-11 → 2026-05-12). v0.1.0 and v0.1.1 both
-shipped known-broken — v0.1.0 had a critical SPA fallback bug
-([`Path<String>` on `Router::fallback`](docs/agent/findings/m4-release-readiness-spa-fallback-extractor.md));
-v0.1.1 had a stale `Cargo.lock`. Both were caught by the **M4 release-readiness
-audit** running hermetic Playwright + clean-shell probe against the released
-binary — the audit pattern works as designed, catching things that
-intent-driven self-checks missed.
-
-**v0.1.2 is the first usable tag**. The CHANGELOG names every regression by
-file:line and the gate that missed each one. If you'd prefer a year-old tag
-where you don't see the patch dance, this isn't your project.
-
-The methodology discipline runs throughout the repo — see
-[`docs/agent/findings/cto-shougate-test-gate-grep-leak.md`](docs/agent/findings/cto-shougate-test-gate-grep-leak.md)
-for the kind of self-incrimination postmortem the project writes about itself.
-
----
-
 ## Looking for 3-5 design partners
 
 If your team already runs **AI-driven development at multi-agent fidelity** —
 3+ parallel agent workflows, ADR/finding discipline, you'd benefit from an
-honest token ledger and a forced doc-coverage gate — file an issue describing
-your setup. Studio in concert with [ADSD](https://github.com/Cobrust-lang/agent-driven-development)
-is a hard adoption (you import a vocabulary + a CI gate, not just a UI), but
-a real one if you're already 80% of the way there.
+honest token ledger and a forced doc-coverage gate — open an issue with the
+`design-partner` template describing your setup. Studio in concert with
+[ADSD](https://github.com/Cobrust-lang/agent-driven-development) is a hard
+adoption (you import a vocabulary + a CI gate, not just a UI), but a real
+one if you're already 80% of the way there.
 
-Concrete asks design partners would make of me, in priority order:
+Top friction items design partners would file against me, in priority order:
 
 1. **AEAD round-trip on `/login`** — kill the env-var workaround
-2. **Linux + windows tarballs** in CI matrix
+2. **Linux + windows tarballs** via the CI matrix (release.yml landed; first cross-platform tag pending)
 3. **A `--multi-user` mode** with proper RBAC + audit log (post-MVP, M6+)
 4. **`task_tag` plumbing through `CompletionRequest`** (ADR-0006 §F-03 noted; partial today)
-5. **Real persona simulation in CI** (M2-M3 ran one round; Mei/Aleksandr/Sarah reports drove this README rewrite)
+5. **Persona simulation in CI** — already-run human-in-the-loop, not yet automated
 
 I'm `hakureirm` on GitHub. File issues with the `design-partner` label.
 
@@ -235,3 +216,25 @@ your option. Same as Rust itself and ADSD itself.
 Studio's `studio-router` crate is a derivative work of `cobrust-llm-router`
 (also Apache-2.0 OR MIT, same author lineage) per ADR-0005 §"License
 attribution"; upstream copyright headers are preserved on every lifted file.
+
+---
+
+## Honest status
+
+This is a 5-day MVP (built 2026-05-11 → 2026-05-12, single contributor).
+v0.1.0 and v0.1.1 both shipped known-broken — v0.1.0 had a critical SPA
+fallback bug
+([`Path<String>` on `Router::fallback`](docs/agent/findings/m4-release-readiness-spa-fallback-extractor.md));
+v0.1.1 had a stale `Cargo.lock`. Both were caught by the M4 release-readiness
+audit running hermetic Playwright + a clean-shell probe against the released
+binary — the audit pattern works as designed, catching things that
+intent-driven self-checks missed.
+
+**v0.1.2 is the first usable tag**. The CHANGELOG names every regression by
+file:line and the gate that missed each one. If you'd prefer a year-old tag
+where you don't see the patch dance, this isn't your project.
+
+The methodology discipline runs throughout the repo — see
+[`docs/agent/findings/cto-shougate-test-gate-grep-leak.md`](docs/agent/findings/cto-shougate-test-gate-grep-leak.md)
+for the kind of self-incrimination postmortem the project writes about
+itself.
