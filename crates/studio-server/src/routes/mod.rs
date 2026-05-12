@@ -17,11 +17,15 @@
 #![allow(clippy::missing_errors_doc)]
 
 pub mod adr;
+pub mod auth;
 pub mod finding;
 pub mod health;
+pub mod project;
 pub mod version;
 
 pub use adr::{AdrDraftBody, AdrListResponse};
+pub use auth::{SetEndpointRequest, SetEndpointResponse};
 pub use finding::{FindingDraftBody, FindingListResponse};
 pub use health::{HealthResponse, health};
+pub use project::ProjectCurrentResponse;
 pub use version::{VersionResponse, version};
