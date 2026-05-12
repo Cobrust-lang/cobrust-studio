@@ -296,19 +296,29 @@ impl Router {
     async fn order_preferred(&self) -> Vec<ProviderModel> {
         match self.strategy {
             Strategy::Latency => {
+                // Sort indices into self.preferred by EWMA latency, then
+                // clone once per element at return. Prior implementation
+                // built a Vec<(f64, ProviderModel)> + sorted + materialized,
+                // doubling the per-element allocation. Persona-audit catch
+                // (Aleksandr's PR #1 — M5 cycle).
                 let tracker = self.latency.lock().await;
-                let mut paired: Vec<(f64, ProviderModel)> = self
+                let mut indexed: Vec<(f64, usize)> = self
                     .preferred
                     .iter()
-                    .map(|pm| {
+                    .enumerate()
+                    .map(|(idx, pm)| {
                         let key = format!("{}:{}", pm.provider, pm.model);
                         let latency = tracker.get(&key).unwrap_or(f64::INFINITY);
-                        (latency, pm.clone())
+                        (latency, idx)
                     })
                     .collect();
                 drop(tracker);
-                paired.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-                paired.into_iter().map(|(_, pm)| pm).collect()
+                indexed
+                    .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                indexed
+                    .into_iter()
+                    .map(|(_, idx)| self.preferred[idx].clone())
+                    .collect()
             }
             // Quality and Cost walk the table in submitted order.
             Strategy::Quality | Strategy::Cost => self.preferred.clone(),
