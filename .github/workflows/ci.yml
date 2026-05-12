@@ -76,6 +76,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history needed for §5 git-reachability check on
+          # last_verified_commit SHAs. Shallow clone (default) breaks
+          # the F20 enforcement at CI time.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@1.94.1
       - uses: Swatinem/rust-cache@v2
       - run: bash scripts/doc-coverage.sh
@@ -131,6 +136,11 @@ jobs:
     needs: [build, web-check]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so the dogfood spec can verify the 6 constitutional
+          # ADRs are reachable + the doc-coverage script's §5 git-reachability
+          # check stays green for cross-referenced commits.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@1.94.1
       - uses: Swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v4
