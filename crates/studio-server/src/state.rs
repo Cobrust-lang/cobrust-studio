@@ -24,6 +24,8 @@ use studio_router::Router;
 use studio_store::Store;
 use time::OffsetDateTime;
 
+use crate::sse::EventHub;
+
 /// Application state shared across all Axum handlers.
 ///
 /// Clones are cheap: [`studio_store::Store`] is `Arc`-shared internally
@@ -51,6 +53,12 @@ pub struct AppState {
     /// [`axum::serve`] starts accepting connections. Powers the
     /// `uptime_seconds` field on `/api/health`.
     pub started_at: OffsetDateTime,
+
+    /// SSE fan-out hub for state-change events. The boot-time watcher
+    /// task ([`crate::serve`]) publishes ADR/finding events; the
+    /// `/api/events` handler subscribes per-request. Cloning the state
+    /// shares the same hub via `Arc` internally.
+    pub events: EventHub,
 }
 
 impl AppState {
@@ -66,6 +74,7 @@ impl AppState {
             router,
             project_root,
             started_at: OffsetDateTime::now_utc(),
+            events: EventHub::new(),
         }
     }
 
@@ -104,5 +113,11 @@ impl AppState {
     #[must_use]
     pub fn started_at(&self) -> OffsetDateTime {
         self.started_at
+    }
+
+    /// Borrow the SSE event hub. `/api/events` subscribes through this.
+    #[must_use]
+    pub fn events(&self) -> &EventHub {
+        &self.events
     }
 }
