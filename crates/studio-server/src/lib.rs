@@ -24,6 +24,7 @@
 
 pub mod app;
 pub mod cli;
+pub mod embed;
 pub mod error;
 pub mod router_init;
 pub mod routes;
