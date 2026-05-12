@@ -1,7 +1,7 @@
 ---
 doc_kind: module
 module_id: studio-server
-last_verified_commit: 4610a69
+last_verified_commit: 7507757
 dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0007]
 ---
 
