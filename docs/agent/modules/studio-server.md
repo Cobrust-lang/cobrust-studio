@@ -1,8 +1,8 @@
 ---
 doc_kind: module
 module_id: studio-server
-last_verified_commit: ae9df29
-dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0007, adr:0008]
+last_verified_commit: fd7eecc
+dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0007, adr:0008, adr:0009]
 ---
 
 # Module: studio-server
@@ -272,6 +272,142 @@ cleanup: trap-kill on exit
 Verified locally (commit 3b56d0e): release build produces the binary,
 smoke run with PORT=37878 PASSes — Studio sees its own 6 constitutional
 ADRs (0001..0006) via the same HTTP surface the M2 frontend uses.
+
+### Wave M8 (as-built — ADR-0009 persistent session across restart)
+
+M8 closes Sarah v3/v4 audit Gate B (persistent session across binary
+restart). The in-memory `SessionKey` now optionally survives a restart
+by wrapping the user's passphrase in an OS-keychain entry or a `0600`
+plaintext file. Closes the README §"Looking for 3-5 design partners"
+item 4 ("Persistent session across binary restart").
+
+New module `crates/studio-server/src/persist.rs` (~470 LOC, 12 unit tests):
+
+```text
+PersistBackend                 — enum { None, Keychain, File }; clap
+                                 value_parser (case-insensitive trim)
+PersistError                   — thiserror; #[non_exhaustive]
+  Keychain(String)             — OS keychain access denied / unavailable
+  File { path, source }        — I/O failure on the file path
+  InsecurePermissions { mode } — Unix-only; rejects non-0600 mode
+  NotConfigured                — mode=File without a path
+
+PersistStore (trait)           — Send + Sync; object-safe
+  .save(passphrase: &str)
+  .load() -> Option<Zeroizing<String>>
+  .clear()
+
+NullStore                      — PersistBackend::None; all ops are noops
+KeychainStore                  — PersistBackend::Keychain; keyring crate
+  service = "cobrust-studio"
+  username = "session-passphrase"
+FileStore { path }             — PersistBackend::File; 0600 mode on Unix
+  .save: O_CREAT|O_TRUNC|O_WRONLY mode 0600 + write + sync + chmod 0600
+  .load: rejects mode != 0600 → InsecurePermissions
+  .clear: remove_file (idempotent on missing)
+
+build_store(backend, path) -> Result<Box<dyn PersistStore>, PersistError>
+```
+
+Boot-flow integration in `studio_server::serve`:
+
+```text
+on_serve_start:
+  persist_arc = persist::build_store(args.persist_session, args.persist_session_file)?
+  state = AppState::with_persist(store, router, project_root, persist_arc)
+  state.debug_session = args.debug_session
+  // M6 --dev-api-key path stays unchanged
+  // M8 auto-unlock
+  studio_server::auto_unlock_on_boot(&state).await
+  // 1. persist.load() → passphrase (or None → return)
+  // 2. read session_kv blob (or auto-clear orphan + return)
+  // 3. derive(passphrase, blob[..16]) → candidate key
+  // 4. VERIFY key.open(blob.ciphertext) — auto-clear on mismatch (M6 lesson)
+  // 5. stash verified key into state.session_key
+```
+
+Login + logout integration:
+
+| Method | Path | M8 addition |
+|--------|------|-------------|
+| POST | `/api/login` | On successful seal+store: also `state.persist.save(passphrase)`. NullStore = noop. Failures logged, never escalate. |
+| POST | `/api/logout` | Unchanged for default; `?purge=true` ALSO calls `state.persist.clear()`. |
+
+CLI additions (`ServeArgs`):
+
+```text
+--persist-session <MODE>         # none | keychain | file (default: none)
+                                 # env: COBRUST_PERSIST_SESSION
+--persist-session-file <PATH>    # required when MODE=file
+                                 # env: COBRUST_PERSIST_SESSION_FILE
+```
+
+New `AppState` field:
+
+```rust
+pub persist: Arc<dyn PersistStore + Send + Sync>,
+```
+
+Constructor split — `AppState::new(store, router, root)` defaults to
+`Arc::new(NullStore)`; M8 callers use `AppState::with_persist(store,
+router, root, persist)`.
+
+New crate-root public symbol — `pub async fn auto_unlock_on_boot(state:
+&AppState)`. Exposed for the integration test corpus to drive the
+same path `serve()` walks (F1.5 deep-source-read discipline; the M6
+seal-salt-mismatch lesson taught us to test the boot path, not just
+a same-instance round-trip).
+
+Wave M8 layout addition:
+
+```
+crates/studio-server/src/
+├── persist.rs           # NEW — PersistBackend / PersistError / PersistStore
+│                        # + NullStore / KeychainStore / FileStore + build_store
+├── lib.rs               # + auto_unlock_on_boot(state) public function
+├── state.rs             # + AppState.persist field + with_persist() constructor
+├── cli.rs               # + --persist-session, --persist-session-file flags
+└── routes/
+    └── login.rs         # + state.persist.save() mirror on success
+                         # + LogoutQuery { purge: bool } + state.persist.clear()
+```
+
+Integration tests (`tests/persistent_session.rs`, 7 tests + 1 #[ignore]'d):
+
+- `file_persist_path_survives_restart` — primary regression gate
+  (POST /api/login with file backend → simulate restart with fresh
+  AppState pointing at SAME store + SAME file → assert auto-unlock).
+- `none_persist_path_drops_key_on_restart` — v0.3.0 baseline preserved.
+- `logout_purge_clears_file_persist` — `?purge=true` deletes the file
+  + restart cannot auto-unlock.
+- `regular_logout_preserves_file_persist_for_next_restart` — default
+  logout drops in-memory key but keeps persist (re-login by restart).
+- `wrong_persist_passphrase_invalidates_and_clears` — stale persist
+  (passphrase mismatches blob) → boot-unlock auto-clears.
+- `orphaned_persist_with_no_blob_auto_clears` — persist has
+  passphrase but session_kv has no blob → boot-unlock auto-clears.
+- `keychain_path_survives_restart` (#[ignore]) — same as file path
+  but via OS keychain. Run locally with `--ignored --nocapture`;
+  CI runners may not have a usable keychain (ADR-0009 §"Phase 2
+  caveats").
+
+Workspace deps added (per ADR-0009):
+
+```toml
+keyring = { version = "3", default-features = false, features = [
+    "apple-native",         # macOS Security.framework
+    "windows-native",       # Windows Credential Manager (DPAPI)
+    "sync-secret-service",  # Linux org.freedesktop.secrets D-Bus
+    "crypto-rust",          # pure-Rust AES-GCM for D-Bus transport
+] }
+zeroize = { version = "1.8", features = ["std", "zeroize_derive"] }
+```
+
+The `Zeroizing<String>` wrapper on the load path wipes the passphrase
+heap allocation on drop (Aleksandr v3 P2 memory-hygiene mitigation
+extended into M8 — ADR-0007 says memory dump is out of scope, but
+M8 explicitly raises the bar since the new code paths handle the raw
+passphrase string outside the brief login-handler scope).
 
 ### Wave M7 (as-built — ADR-0008 multi-provider /login)
 

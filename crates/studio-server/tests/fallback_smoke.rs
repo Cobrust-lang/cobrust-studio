@@ -71,7 +71,7 @@ async fn nonexistent_route_body_has_error_field() {
     // be non-null and either a non-empty string or an object.
     match err {
         serde_json::Value::String(s) => {
-            assert!(!s.is_empty(), "error string must be non-empty: body={body}",);
+            assert!(!s.is_empty(), "error string must be non-empty: body={body}");
         }
         serde_json::Value::Object(o) => assert!(
             !o.is_empty(),

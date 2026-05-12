@@ -30,6 +30,7 @@ use studio_store::Store;
 use time::OffsetDateTime;
 use tokio::sync::RwLock;
 
+use crate::persist::{NullStore, PersistStore};
 use crate::secret::SessionKey;
 use crate::sse::EventHub;
 
@@ -39,8 +40,16 @@ use crate::sse::EventHub;
 /// and the optional router is wrapped in [`Arc`] so cloning the state
 /// only bumps reference counts. The `session_key` is behind an
 /// `Arc<RwLock<_>>` so the login route can write the derived key while
-/// dispatch routes hold concurrent read locks.
-#[derive(Clone, Debug)]
+/// dispatch routes hold concurrent read locks. The `persist` backend
+/// is behind an `Arc<dyn _>` so all clones share the same M8 store
+/// (boot-flow loads from it, login mirror-saves to it, logout-purge
+/// clears it).
+///
+/// `Debug` is hand-written (not derived) because the `persist` field
+/// holds a trait object whose concrete `Debug` impls intentionally
+/// redact secrets — the auto-derive cannot synthesise a `Debug` for
+/// `Arc<dyn PersistStore + Send + Sync>` anyway.
+#[derive(Clone)]
 pub struct AppState {
     /// Persistence layer (ADR-0004). Constructed by [`Store::open`] at
     /// startup and shared by every route that touches ADR / finding /
@@ -88,6 +97,43 @@ pub struct AppState {
     /// builds. The endpoint returns decrypted `endpoint` + `model` for E2E
     /// test introspection (never the `api_key`).
     pub debug_session: bool,
+
+    /// M8 persistent-session backend (ADR-0009).
+    ///
+    /// `Arc<dyn PersistStore + Send + Sync>` so all `AppState` clones
+    /// share the same store handle. Default backend is
+    /// [`NullStore`] (no-op) so the v0.3.0 baseline behaviour is
+    /// unchanged when the operator did not opt into M8.
+    ///
+    /// Touched by three call sites:
+    /// - **Boot flow** (`serve()` in lib.rs): `persist.load()` →
+    ///   `SessionKey::derive` → stash into `session_key` if successful.
+    /// - **Login mirror** (`routes/login.rs`): on successful seal+store,
+    ///   `persist.save(passphrase)` so the next boot can auto-unlock.
+    /// - **Logout purge** (`routes/login.rs`): when `?purge=true`,
+    ///   `persist.clear()` to forget the credential entirely.
+    ///
+    /// See `crate::persist` module docs for the three backend modes
+    /// and ADR-0009 for the binding decision.
+    pub persist: Arc<dyn PersistStore + Send + Sync>,
+}
+
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Hand-written impl — see struct doc; `persist` is `dyn` so an
+        // auto-derive can't synthesise. We render only the structural
+        // shape; secrets are never reachable through `Debug`.
+        f.debug_struct("AppState")
+            .field("store", &self.store)
+            .field("router", &self.router.as_ref().map(|_| "Some(Router)"))
+            .field("project_root", &self.project_root)
+            .field("started_at", &self.started_at)
+            .field("events", &self.events)
+            .field("session_key", &"Arc<RwLock<Option<SessionKey>>>")
+            .field("debug_session", &self.debug_session)
+            .field("persist", &"Arc<dyn PersistStore>")
+            .finish()
+    }
 }
 
 impl AppState {
@@ -99,9 +145,33 @@ impl AppState {
     ///
     /// `session_key` initialises to `None` — the user must `POST /api/login`
     /// (or the binary must start with `--dev-api-key`) to authenticate.
-    /// `debug_session` is `false` by default.
+    /// `debug_session` is `false` by default. `persist` defaults to
+    /// [`NullStore`] (the v0.3.0 baseline; restart drops in-memory
+    /// session_key). Callers that opt into M8 persistence must use
+    /// [`Self::with_persist`].
     #[must_use]
     pub fn new(store: Store, router: Option<Arc<Router>>, project_root: PathBuf) -> Self {
+        Self::with_persist(store, router, project_root, Arc::new(NullStore))
+    }
+
+    /// Construct a new [`AppState`] with an explicit M8 `persist`
+    /// backend.
+    ///
+    /// Used by `serve()` after `persist::build_store(args)` resolves
+    /// the operator's `--persist-session=` choice. The boot-flow then
+    /// reads `persist.load()` to attempt auto-unlock before
+    /// `axum::serve` starts accepting connections.
+    ///
+    /// Tests that need to assert on M8 boot-flow behaviour should also
+    /// use this constructor (the `tests/persistent_session.rs`
+    /// integration corpus does exactly this).
+    #[must_use]
+    pub fn with_persist(
+        store: Store,
+        router: Option<Arc<Router>>,
+        project_root: PathBuf,
+        persist: Arc<dyn PersistStore + Send + Sync>,
+    ) -> Self {
         Self {
             store,
             router,
@@ -110,6 +180,7 @@ impl AppState {
             events: EventHub::new(),
             session_key: Arc::new(RwLock::new(None)),
             debug_session: false,
+            persist,
         }
     }
 

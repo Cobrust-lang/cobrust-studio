@@ -26,6 +26,7 @@ pub mod app;
 pub mod cli;
 pub mod embed;
 pub mod error;
+pub mod persist;
 pub mod router_init;
 pub mod routes;
 pub mod secret;
@@ -57,6 +58,7 @@ pub const fn version() -> &'static str {
 /// during startup; per-route errors are not modelled here (routes
 /// return [`axum::response::Response`] directly).
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ServerError {
     /// [`studio_store::Store::open`] failed during startup.
     #[error("store: {0}")]
@@ -64,6 +66,15 @@ pub enum ServerError {
     /// `bind` / `accept` / shutdown signal handling failed.
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+    /// M8 (ADR-0009) — `--persist-session=` flag invariant violation
+    /// caught at boot. Today fired only for `mode=file` without
+    /// `--persist-session-file`. The CLI is the canonical first gate;
+    /// this surface is a defence-in-depth check that catches the same
+    /// invariant if a downstream caller constructs `ServeArgs`
+    /// manually (e.g. an integration test, a future config-file
+    /// front-end).
+    #[error("persist config: {0}")]
+    Persist(#[from] persist::PersistError),
 }
 
 /// Run the server end-to-end: open the store, build the app, bind the
@@ -93,10 +104,36 @@ pub async fn serve(args: &ServeArgs) -> Result<(), ServerError> {
     // for the binding contract, and `crate::router_init` for the resolution
     // order. The `None` path keeps Wave-A4 503 behavior intact.
     let router = router_init::try_build_router_from_project(&project_root, &store).await?;
-    let mut state = AppState::new(store, router, project_root.clone());
+
+    // M8 (ADR-0009): build the persistent-session backend before constructing
+    // AppState so the boot-time auto-unlock path has the same Arc the login
+    // handler will later mirror into. `build_store` hard-errors if
+    // `mode=file` without `--persist-session-file` — boot fails fast so the
+    // operator sees a clear "missing file path" message instead of silently
+    // dropping the persistence option.
+    let persist_arc: std::sync::Arc<dyn persist::PersistStore + Send + Sync> =
+        persist::build_store(args.persist_session, args.persist_session_file.clone())?.into();
+
+    let mut state = AppState::with_persist(store, router, project_root.clone(), persist_arc);
 
     // M6: Apply --debug-session flag.
     state.debug_session = args.debug_session;
+
+    // M8 (ADR-0009): auto-unlock — if a persist backend has a passphrase,
+    // re-derive the SessionKey now so the next request doesn't need to
+    // visit /login. The path is best-effort: failures here (keychain
+    // denied, salt missing, derive error, open() mismatch) log a warning
+    // and fall through to the v0.3.0 baseline (user re-enters passphrase
+    // via /login).
+    //
+    // Deep-source-read discipline: the re-derive needs the salt from
+    // `session_kv.ciphertext[..16]` — same as the wrong-passphrase
+    // guard in login.rs. Verify the derived key actually opens the
+    // blob before stashing it; this catches the "passphrase rotated
+    // externally" hazard (operator deleted the blob via sqlite3 + re-
+    // logged in with a new passphrase, but the keychain still holds
+    // the OLD passphrase). M6 seal-salt-mismatch lesson lives here.
+    auto_unlock_on_boot(&state).await;
 
     // M6: Apply --dev-api-key escape hatch (ADR-0007 §"Env-var path retention").
     // M7 (ADR-0008): Use --dev-provider-kind to select the provider kind for
@@ -173,6 +210,148 @@ pub async fn serve(args: &ServeArgs) -> Result<(), ServerError> {
     let app = build_router(state);
     axum::serve(listener, app.into_make_service()).await?;
     Ok(())
+}
+
+/// M8 (ADR-0009) auto-unlock — attempt to restore the in-memory
+/// `SessionKey` from the configured persist backend on boot.
+///
+/// Called by [`serve`] immediately after [`AppState`] is constructed
+/// and before `axum::serve` starts accepting connections. Exposed
+/// `pub` so integration tests in `tests/persistent_session.rs` can
+/// drive the SAME function the binary does — F1.5 deep-source-read
+/// discipline (test the path the caller actually walks).
+///
+/// The flow walks the same algorithm `routes/login.rs` uses on the
+/// wrong-passphrase guard (read blob → extract salt → derive →
+/// open):
+///
+/// 1. `persist.load()` → passphrase (or `Ok(None)` → return; user
+///    visits /login normally).
+/// 2. Read the `session_kv` blob — needed for the salt at
+///    `ciphertext[..16]`. If the blob is missing the persist entry
+///    is orphaned (operator deleted the blob via sqlite3 to rotate
+///    credentials), so clear the persist entry + log a warn.
+/// 3. `SessionKey::derive(passphrase, salt)` → candidate key.
+/// 4. `key.open(&blob.ciphertext)` to VERIFY — must succeed.
+///    Failure means the persist passphrase doesn't match the blob
+///    (passphrase rotated externally without clearing persist;
+///    blob corrupted; etc.). On failure, auto-clear the persist
+///    entry to fail-loud on the next `/login` attempt.
+/// 5. Stash the verified key into `state.session_key`. Subsequent
+///    `/api/dispatch` calls use the in-memory key as if `/api/login`
+///    had just run.
+///
+/// Every error path collapses to "auto-unlock did not happen; user
+/// must /login" so a misconfigured persist backend never blocks the
+/// server from booting.
+///
+/// Calling this against a [`AppState`] whose `persist` is a
+/// [`persist::NullStore`] is safe — `NullStore::load()` returns
+/// `Ok(None)` so the function returns early at step 1. No need for
+/// the caller to gate the call on the backend selector.
+pub async fn auto_unlock_on_boot(state: &AppState) {
+    // Step 1 — load passphrase from backend.
+    let passphrase = match state.persist.load() {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            tracing::debug!("M8 auto-unlock: persist backend empty; user will /login normally");
+            return;
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "M8 auto-unlock: persist backend load failed; user must /login"
+            );
+            return;
+        }
+    };
+
+    // Step 2 — read the session_kv blob (the salt source).
+    let blob = match state.store.session().get_endpoint().await {
+        Ok(Some(b)) => b,
+        Ok(None) => {
+            // Persist has a passphrase but there's no blob — orphaned
+            // entry (operator likely deleted the row via sqlite3 to
+            // rotate credentials but forgot to purge persist). Auto-
+            // clear so the next /login starts clean.
+            tracing::warn!(
+                "M8 auto-unlock: persist has a passphrase but session_kv is empty — \
+                 orphaned persist entry (passphrase rotated externally? blob deleted?); \
+                 clearing persist to avoid stale-credential drift"
+            );
+            if let Err(e) = state.persist.clear() {
+                tracing::warn!(error = %e, "M8 auto-unlock: persist clear failed");
+            }
+            return;
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "M8 auto-unlock: session_kv read failed; user must /login"
+            );
+            return;
+        }
+    };
+
+    // Step 3 — extract salt; require the M6 scheme + ≥16-byte ciphertext.
+    if blob.scheme != secret::SCHEME {
+        tracing::warn!(
+            blob_scheme = %blob.scheme,
+            expected_scheme = secret::SCHEME,
+            "M8 auto-unlock: blob has unexpected scheme; user must /login"
+        );
+        return;
+    }
+    if blob.ciphertext.len() < 16 {
+        tracing::warn!(
+            blob_len = blob.ciphertext.len(),
+            "M8 auto-unlock: blob too short to hold salt; user must /login"
+        );
+        return;
+    }
+    let mut salt = [0u8; 16];
+    salt.copy_from_slice(&blob.ciphertext[..16]);
+
+    // Step 4 — derive the key.
+    let key = match secret::SessionKey::derive(&passphrase, &salt) {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                "M8 auto-unlock: SessionKey::derive failed; user must /login"
+            );
+            return;
+        }
+    };
+
+    // Step 5 — VERIFY by opening the blob (catches passphrase mismatch).
+    //
+    // This is the M6 seal-salt-mismatch lesson applied: the round-trip
+    // path is `load passphrase → read blob → derive → OPEN blob`; the
+    // open step is what catches a stale persist entry (passphrase
+    // doesn't match the salt that sealed the blob).
+    if let Err(e) = key.open(&blob.ciphertext) {
+        tracing::warn!(
+            error = %e,
+            "M8 auto-unlock: derived key failed to open blob — \
+             passphrase rotated externally? blob corrupted? \
+             clearing persist to avoid stale-credential drift; user must /login"
+        );
+        if let Err(clear_err) = state.persist.clear() {
+            tracing::warn!(
+                error = %clear_err,
+                "M8 auto-unlock: persist clear failed after open() mismatch"
+            );
+        }
+        return;
+    }
+
+    // Step 6 — stash the verified key.
+    {
+        let mut guard = state.session_key.write().await;
+        *guard = Some(key);
+    }
+    tracing::info!("M8 auto-unlock: session restored from persist backend; no /login needed");
 }
 
 /// Spawn two background tasks that drain

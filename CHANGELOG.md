@@ -6,6 +6,55 @@ All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepac
 
 ### Added
 
+- **M8 persistent session across binary restart (ADR-0009 Phase 2)** —
+  closes Sarah v3/v4 audit Gate B + README §"Looking for 3-5 design
+  partners" item 4 + the dogfooder friction the user named as the
+  daily-usability gap. The in-memory `SessionKey` now optionally
+  survives a binary restart by wrapping the user's `/api/login`
+  passphrase in one of three backends:
+  - `--persist-session=none` (default) — v0.3.0 baseline; restart
+    drops the in-memory key and the user re-enters their passphrase
+    via `/login`.
+  - `--persist-session=keychain` — OS keychain (macOS Keychain /
+    freedesktop secret-service / Windows Credential Manager via
+    DPAPI). Strongest cold-disk-theft posture; the passphrase
+    lives in the user-scoped keychain, never on the disk image.
+  - `--persist-session=file --persist-session-file=<PATH>` — `0600`
+    mode plaintext file fallback for environments without a
+    keychain (Docker, headless Linux without D-Bus, NixOS modules,
+    Kubernetes operators). Same trust model as `--dev-api-key`
+    (operator-bounded).
+  - New `crates/studio-server/src/persist.rs` module: 470 LOC,
+    `PersistBackend` enum + `PersistStore` trait + three concrete
+    backends (`NullStore` / `KeychainStore` / `FileStore`).
+  - 12 unit tests + 7 integration tests in `tests/persistent_
+    session.rs` (6 always-run + 1 `#[ignore]`'d keychain test).
+    The integration tests drive `studio_server::auto_unlock_on_
+    boot()` directly (F1.5 deep-source-read discipline; tests the
+    SAME path `serve()` walks, not a same-instance round-trip —
+    the lesson the M6 seal-salt-mismatch bug taught us).
+  - Boot-flow auto-unlock verifies the derived key actually opens
+    the blob before stashing it (M6 seal-salt-mismatch lesson
+    applied). On `open()` failure → auto-clear persist + fall
+    through to `/login` so a stale persist entry never masquerades
+    as a successful unlock.
+  - `POST /api/logout?purge=true` clears the persist backend in
+    addition to dropping the in-memory key — for "I want to fully
+    forget this credential" workflows. Default `POST /api/logout`
+    preserves the persist backend so the next restart can still
+    auto-unlock (matches ADR-0009 §"On /api/logout" decision).
+  - Workspace deps: `keyring = "3"` (with `apple-native +
+    windows-native + sync-secret-service + crypto-rust` features)
+    + `zeroize = "1.8"` (the `Zeroizing<String>` wrapper wipes the
+    passphrase heap allocation on drop — Aleksandr v3 P2 memory-
+    hygiene mitigation extended into M8).
+  - Documentation: `docs/agent/modules/studio-server.md` §"Wave
+    M8" + `docs/human/{zh,en}/secret-storage.md` §"Persistent
+    session backends" + README §"Configuration" §"Persistent
+    session (long-lived deployments)".
+  - **Closes ADR-0009 Phase 2** (Phase 1 CTO spike landed at
+    `bc9e624`).
+
 - **Mei v3 — release-notes auto-wiring + dynamic /login footer**
   (`c233367`):
   - `release.yml` now extracts the matching `## [x.y.z]` CHANGELOG

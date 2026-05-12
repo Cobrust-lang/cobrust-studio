@@ -70,6 +70,33 @@ rust-embed = { version = "8", features = ["mime-guess"] }
 aes-gcm = { version = "0.10", features = ["aes"] }   # `aes` feature unlocks AES-NI on x86_64 + ARMv8 Crypto Extensions on aarch64 (Aleksandr v3 P2 #3)
 argon2 = "0.5"
 rand_core = { version = "0.6", features = ["std"] }
+# M8 — persistent session across binary restart (ADR-0009).
+#
+# Cross-platform OS keychain access:
+# - macOS: `apple-native` → Security framework's `SecKeychain`.
+# - Windows: `windows-native` → Credential Manager via DPAPI.
+# - Linux: `sync-secret-service` + `crypto-rust` → freedesktop
+#   `org.freedesktop.secrets` D-Bus interface (gnome-keyring / KWallet /
+#   secret-service-tool). The `crypto-rust` backend is the pure-Rust
+#   AES-GCM transport encryption for the D-Bus session (NOT for the
+#   stored value; the stored value is the plaintext passphrase that
+#   `keyring` opaquely passes to the secret-service daemon).
+#
+# `default-features = false` strips the async/tokio variants — M8 reads
+# the keychain once at boot (sub-50ms; bocking is fine) and writes once
+# per /api/login (already in an async handler that can `tokio::task::
+# spawn_blocking` if needed; current impl blocks the thread for the
+# ~ms-level write which is the same cost as a SQL UPDATE).
+keyring = { version = "3", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+# Memory-hygiene for the passphrase string handed to `keyring` /
+# `FileStore`. ADR-0007 §"Threat model" puts memory-dump out of scope,
+# but the M8 surface adds a NEW code path that handles the raw
+# passphrase string outside the brief login-handler scope; the
+# Aleksandr v3 P2 §"Memory hygiene" mitigation applies. `Zeroizing<
+# String>` wipes the underlying `Vec<u8>` heap allocation on drop so a
+# subsequent allocation reuse cannot leak the old bytes.
+zeroize = { version = "1.8", features = ["std", "zeroize_derive"] }
+libc = "0.2"
 
 [profile.release]
 lto = "thin"
