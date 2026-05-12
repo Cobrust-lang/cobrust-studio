@@ -117,11 +117,17 @@ ok "M0 — last_verified_commit is a real SHA (F20 enforced)"
 if command -v cargo >/dev/null 2>&1; then
     test_log=$(mktemp -t cobrust-studio-test.XXXXXX)
     trap 'rm -f "$test_log"' EXIT
-    if cargo test --workspace --locked --no-fail-fast > "$test_log" 2>&1; then
-        : # cargo's own exit code already 0
-    else
+    # Use cargo exit code AND FAILED-grep as paired gates. The exit
+    # code catches compile errors, panics, and lockfile mismatches
+    # (--locked) that don't produce a `test result: FAILED` line at
+    # all. F-M4-01 follow-up: v0.1.1 release shipped with a stale
+    # Cargo.lock; cargo test --locked exited 101 but the grep
+    # returned 0 FAILED, so the script passed green. v0.1.2 closes.
+    if ! cargo test --workspace --locked --no-fail-fast > "$test_log" 2>&1; then
         cargo_exit=$?
-        echo "doc-coverage: cargo test exit=$cargo_exit (capturing FAILED count below)" >&2
+        echo "doc-coverage: FAIL — cargo test exited $cargo_exit (lockfile mismatch / compile error / panic)" >&2
+        tail -20 "$test_log" >&2
+        exit 1
     fi
     failed_count=$(grep -c '^test result: FAILED' "$test_log" || true)
     if [ "${failed_count:-0}" -ne 0 ]; then
@@ -130,7 +136,7 @@ if command -v cargo >/dev/null 2>&1; then
         exit 1
     fi
     ok_count=$(grep -c '^test result: ok' "$test_log" || echo 0)
-    ok "M0 — cargo test green ($ok_count ok groups, 0 FAILED; script-enforced per cto-shougate finding)"
+    ok "M0 — cargo test green ($ok_count ok groups, exit 0, 0 FAILED; script-enforced per cto-shougate + F-M4-01 followup)"
 else
     echo "doc-coverage: WARN — cargo not on PATH; skipping test gate. Run \`source \$HOME/.cargo/env\` before this script for full enforcement." >&2
 fi

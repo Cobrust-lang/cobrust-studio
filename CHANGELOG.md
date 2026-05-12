@@ -2,6 +2,47 @@
 
 All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] — 2026-05-12
+
+**Patch release fixing build-from-tag for v0.1.1.**
+
+### Fixed
+
+- **v0.1.1 Cargo.lock stale** — v0.1.1's commit shipped with
+  `Cargo.lock` still referencing the v0.1.0 workspace versions
+  (`studio-server v0.1.0` etc.). Any `cargo build --workspace
+  --locked` against v0.1.1 (e.g. release-tarball.sh, CI builds,
+  or M3-doc-recommended user clone) errored with "cannot update
+  the lock file because --locked was passed." Regenerated via
+  `cargo build` to align Cargo.lock at v0.1.1+. v0.1.2 ships the
+  corrected lockfile.
+- **`scripts/doc-coverage.sh` §6 paired gate** — the script's
+  cargo-test enforcement used `set -e` only on the FAILED-grep
+  count. It did NOT propagate `cargo test`'s non-zero exit code
+  (e.g. 101 from lockfile mismatch). The v0.1.1 release passed
+  doc-coverage despite cargo test exit 101, validating the gap.
+  Hardened to fail on EITHER exit ≠ 0 OR FAILED count > 0. F20
+  closes the recursive case.
+
+### Carried known limitations
+
+Same as v0.1.1 (see below). The SPA fallback fix from v0.1.1 is
+unchanged.
+
+### Upgrade
+
+`v0.1.1` is **known-broken** for `--locked` builds. Users running
+`scripts/build-release.sh` or `cargo build --locked` against v0.1.1
+should upgrade:
+
+```bash
+git fetch origin && git checkout v0.1.2
+bash scripts/build-release.sh
+```
+
+The router public surface is unchanged. Cargo.lock regenerated +
+doc-coverage gate hardened.
+
 ## [0.1.1] — 2026-05-12
 
 **Patch release fixing a critical SPA-routing bug shipped in v0.1.0.**
