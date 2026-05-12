@@ -13,6 +13,7 @@
 //! M2 if the UI grows a detail page.
 
 use axum::extract::State;
+use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -98,10 +99,22 @@ pub async fn list_findings(State(state): State<AppState>) -> Result<Response, Ro
 }
 
 /// Handler for `POST /api/finding`. Returns `201 Created`.
+///
+/// Body extracted via `Result<Json<_>, JsonRejection>` so malformed bodies
+/// surface as `RouteError::BadRequest { code: "invalid_body" }` JSON,
+/// matching the M1 contract (per A5 reconcile, parallel to
+/// [`super::adr::create_adr`]).
 pub async fn create_finding(
     State(state): State<AppState>,
-    Json(body): Json<FindingDraftBody>,
+    payload: Result<Json<FindingDraftBody>, JsonRejection>,
 ) -> Result<Response, RouteError> {
+    let Json(body) = payload.map_err(|e| {
+        // Every JSON-extractor rejection (missing field, wrong
+        // content-type, garbage JSON) collapses onto a single
+        // `invalid_body` code — see [`super::adr::create_adr`].
+        let _ = e.status();
+        RouteError::bad_request(e.body_text(), "invalid_body")
+    })?;
     if body.finding_id.trim().is_empty() {
         return Err(RouteError::bad_request(
             "finding_id must be non-empty",
