@@ -207,10 +207,155 @@ backward compat).
 
 ---
 
+## Persistent session backends (M8, ADR-0009)
+
+By default, the in-memory `SessionKey` is **dropped on every binary
+restart** — you re-enter your passphrase via `/login` to re-derive it.
+For a dev-laptop workflow this is fine (~70 ms re-derive on Apple M4).
+
+For **long-lived deployments** (systemd unit, Docker container,
+headless server reboot) this is friction that compounds. Starting in
+v0.4.0, `cobrust-studio serve` accepts an opt-in `--persist-session`
+flag that wraps your passphrase in one of three backends. The next
+boot auto-unlocks the session — no `/login` round-trip needed.
+
+### Three modes
+
+| Mode | CLI | At-rest store | Trust model |
+|------|-----|---------------|-------------|
+| `none` (default) | `--persist-session=none` | nothing — `SessionKey` dies with the process | v0.3.0 baseline; re-enter passphrase per restart |
+| `keychain` | `--persist-session=keychain` | OS keychain (macOS Keychain / freedesktop secret-service / Windows Credential Manager via DPAPI) | Strongest cold-disk-theft posture; the passphrase lives in the user-scoped keychain, never on disk |
+| `file` | `--persist-session=file --persist-session-file=/path/to/passphrase` | `0600` mode plaintext file | Sysadmin-friendly fallback for environments without a keychain (Docker, headless Linux without D-Bus); same trust model as `--dev-api-key` (operator-bounded) |
+
+Default is `none` — opt-in only. Existing v0.3.x deployments see
+**zero behavior change** until they pass the flag.
+
+### Quick start — keychain backend (dev laptops, single-user servers)
+
+```bash
+cobrust-studio serve \
+  --project /path/to/project \
+  --persist-session=keychain
+```
+
+On first login, your passphrase is written to the OS keychain under
+service `cobrust-studio`, username slot `session-passphrase`. On the
+next restart, the server reads it back, re-derives the session key,
+and you're authenticated without visiting `/login`.
+
+To clear (e.g. handing the laptop back, rotating credentials):
+
+```bash
+# macOS:
+security delete-generic-password -s cobrust-studio -a session-passphrase
+# Linux (gnome-keyring / KWallet):
+secret-tool clear service cobrust-studio username session-passphrase
+# Windows (PowerShell):
+cmdkey /delete:cobrust-studio
+# Or via the API:
+curl -X POST "http://localhost:7878/api/logout?purge=true"
+```
+
+### Quick start — file backend (Docker, systemd, headless without D-Bus)
+
+```bash
+cobrust-studio serve \
+  --project /path/to/project \
+  --persist-session=file \
+  --persist-session-file=/etc/cobrust-studio/passphrase
+```
+
+The file is created on first `/login` with mode `0600` (Unix only —
+Windows skips this check; prefer keychain on Windows). Subsequent
+boots read it; the server auto-unlocks.
+
+To clear:
+
+```bash
+rm /etc/cobrust-studio/passphrase
+# Or via the API:
+curl -X POST "http://localhost:7878/api/logout?purge=true"
+```
+
+Environment-variable equivalents:
+
+```bash
+export COBRUST_PERSIST_SESSION=file
+export COBRUST_PERSIST_SESSION_FILE=/etc/cobrust-studio/passphrase
+cobrust-studio serve --project /path/to/project
+```
+
+### Security trade-off table
+
+| Threat | `none` | `keychain` | `file` |
+|--------|--------|------------|--------|
+| Cold disk theft (stolen `.cobrust-studio/db`) | Protected (passphrase needed) | Protected (passphrase in keychain is OS-user-scoped, not on disk image) | **Weakened** (file is on disk; attacker with disk + file = full unlock) |
+| Sysadmin / OS-user-equivalent attacker (same user as the server) | Out of scope (= ADR-0007 §"Threat model" #3) | Out of scope (same trust level wins keychain access) | Out of scope (same trust level can read the 0600 file) |
+| Container escape | Depends on deployment | Strongest — keychain is host-bound | Worst — file is in the container fs |
+| Docker container restart with bind-mounted persist file | N/A | N/A (host keychain typically not visible) | **Works** — survival is the entire point of this mode |
+| Operator forgets passphrase, no key in keychain/file | Re-login normally | Re-login normally (keychain doesn't recover a forgotten one) | Re-login normally |
+
+**The fundamental property**: disk theft alone is still defeated by the
+keychain backend (the passphrase doesn't appear in the disk image).
+The file backend exists for deployments where a keychain is
+unavailable — choose `keychain` if your environment supports it;
+fall back to `file` for Docker / D-Bus-less Linux / NixOS modules /
+Kubernetes operators.
+
+### What survives a binary restart with `--persist-session=keychain|file`?
+
+```
+[--persist-session=keychain or =file]
+  /login → seal blob + store key in memory + MIRROR passphrase to backend
+  [restart]
+  boot → load passphrase from backend → derive(blob[..16] salt) → VERIFY open(blob) → set in-memory key
+  /api/session/status → authenticated=true (no /login round-trip)
+```
+
+**Verification step** (the M6 seal-salt-mismatch lesson): the boot
+flow doesn't just trust the persist entry. It re-derives the key from
+the persist passphrase, then calls `key.open(&blob.ciphertext)` to
+prove the derived key matches the blob. If the open fails (passphrase
+rotated externally without clearing persist; blob corrupted), the
+persist entry is **auto-cleared** and you fall back to `/login`. This
+prevents the "I rotated my passphrase via sqlite3 but forgot to purge
+the keychain" hazard from masquerading as a successful auto-unlock.
+
+### `/api/logout?purge=true`
+
+A normal `POST /api/logout` drops the in-memory key (so the next
+`/api/dispatch` returns 401) but **preserves** the persist backend —
+you can re-login by simply restarting the server (the backend
+auto-unlock fires again).
+
+`POST /api/logout?purge=true` ALSO clears the persist backend
+(keychain entry / file). Use this when you want a fresh `/login`
+flow on the next boot — e.g. handing the laptop back, rotating
+credentials, demoing the product without your real session bleeding
+through.
+
+### Long-lived deployments (systemd, Docker)
+
+The README §"Configuration" section has the recommended deployment
+recipes. The short version:
+
+- **systemd**: `--persist-session=keychain` if the unit runs under a
+  user with a D-Bus session (`linger` enabled on Linux). Otherwise
+  use `--persist-session=file` with a path under `/etc/cobrust-
+  studio/` and ensure the unit's `User=` directive owns that path.
+- **Docker**: prefer `--persist-session=file` with the passphrase
+  file bind-mounted into the container. Host the file outside the
+  image so `docker build` cache can't accidentally bake the
+  passphrase into a layer.
+
+---
+
 ## Related Documents
 
 - ADR-0007: Secret storage AEAD round-trip design decision
 - ADR-0008: Multi-provider /login (v0.3.0, Phase 2 implemented)
+- ADR-0009: Persistent session across binary restart (v0.4.0, M8)
 - ADR-0003: Auth model (custom-endpoint-first)
-- `crates/studio-server/src/secret.rs`: Implementation
+- `crates/studio-server/src/secret.rs`: AEAD implementation
+- `crates/studio-server/src/persist.rs`: M8 persist backends
 - `crates/studio-server/src/routes/login.rs`: Route handlers

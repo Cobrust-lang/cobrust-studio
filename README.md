@@ -159,6 +159,52 @@ This bypasses `/login` and injects credentials at boot. Also available via env v
 The studio.toml `api_key_env` field (e.g. `ANTHROPIC_API_KEY`) also remains supported
 for backward compatibility and for the studio.toml router path.
 
+### Persistent session (long-lived deployments) — `--persist-session`
+
+For **systemd units / Docker containers / headless servers** that
+restart for deploys or host reboots and shouldn't require a human to
+re-enter the passphrase every time, M8 (v0.4.0, ADR-0009) ships an
+opt-in `--persist-session` flag. Two backends:
+
+```bash
+# Backend A — OS keychain (macOS Keychain / freedesktop secret-service / Windows DPAPI)
+cobrust-studio serve \
+  --project /path/to/project \
+  --persist-session=keychain
+
+# Backend B — 0600 plaintext file (sysadmin-friendly fallback for Docker / no D-Bus)
+cobrust-studio serve \
+  --project /path/to/project \
+  --persist-session=file \
+  --persist-session-file=/etc/cobrust-studio/passphrase
+```
+
+Default is `--persist-session=none` (v0.3.0 baseline; re-enter
+passphrase on every restart). Env var equivalents:
+`COBRUST_PERSIST_SESSION`, `COBRUST_PERSIST_SESSION_FILE`.
+
+On the next `/api/login`, the passphrase is mirrored into the
+chosen backend. On the **next binary boot**, the server reads it
+back, re-derives the in-memory session key (verifying via AES-GCM
+open() before stashing), and you're authenticated without visiting
+`/login`. `POST /api/logout?purge=true` clears the backend entry
+for the "I want to fully forget this credential" case.
+
+Security trade-off summary (full table in `docs/human/en/secret-
+storage.md` §"Persistent session backends"):
+
+| Mode | Cold disk theft | Sysadmin-equivalent attacker | Best for |
+|---|---|---|---|
+| `none` (default) | Protected (passphrase needed) | Out of scope (same trust as server) | Dev laptops; interactive use |
+| `keychain` | Protected (passphrase not on disk) | Out of scope | Single-user servers; dev laptops with passphrase fatigue |
+| `file` | **Weakened** (file IS on disk) | Out of scope | Docker; D-Bus-less Linux; sysadmin-managed deployments |
+
+The keychain mode keeps the cold-disk-theft posture intact (the
+passphrase lives in a user-scoped keychain, not on the disk image).
+The file mode trades some at-rest security for sysadmin friendliness
+— it's the right choice for Docker / NixOS / Kubernetes deployments
+where a keychain isn't viable.
+
 ### Three credential paths — security hierarchy
 
 Studio supports three ways to provide a credential, in **descending order of at-
@@ -280,7 +326,7 @@ Top friction items design partners would file against me, in priority order:
 1. ~~**AEAD round-trip on `/login`** — kill the env-var workaround~~ ✅ shipped in M6 (v0.2.0)
 2. ~~**5-platform tarballs first-time green**~~ ✅ shipped in v0.2.1 (cross-compile patch)
 3. ~~**Multi-provider `/login`**~~ ✅ shipped in M7 (v0.3.0) — `LoginRequest` + `EndpointSecret` gain `provider_kind` (Anthropic / OpenAI-compat); the SvelteKit form adds a Provider dropdown with URL-based auto-suggest. vLLM / DeepSeek / Together / OpenRouter / Groq / Ollama now work end-to-end via the session path. ADR-0008 Phase 2 merged.
-4. **Persistent session across binary restart** — currently the in-memory `SessionKey` drops on restart and the user re-enters their passphrase. For systemd/Docker long-lived runs, wrap the key with OS keychain (macOS Keychain / freedesktop secret-service / Windows DPAPI). v0.3.x ADR pending.
+4. ~~**Persistent session across binary restart**~~ ✅ shipped in M8 (v0.4.0) — `--persist-session=keychain|file` wraps the user passphrase in OS keychain (macOS Keychain / freedesktop secret-service / Windows DPAPI) OR a `0600` plaintext file (Docker / D-Bus-less Linux fallback). Boot auto-unlock re-derives the `SessionKey` without a `/login` round-trip. `POST /api/logout?purge=true` for hard-forget. ADR-0009 Phase 2 merged.
 5. **A `--multi-user` mode** with proper RBAC + audit log (post-MVP, M7+)
 6. **`task_tag` plumbing through `CompletionRequest`** (ADR-0006 §F-03 noted; partial today)
 7. **Persona simulation in CI** — already-run human-in-the-loop (Mei / Aleksandr / Sarah v1-v3 audits all landed), not yet automated
