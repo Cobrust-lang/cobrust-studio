@@ -99,6 +99,8 @@ pub async fn serve(args: &ServeArgs) -> Result<(), ServerError> {
     state.debug_session = args.debug_session;
 
     // M6: Apply --dev-api-key escape hatch (ADR-0007 §"Env-var path retention").
+    // M7 (ADR-0008): Use --dev-provider-kind to select the provider kind for
+    // the boot-time injection (defaults to Anthropic for v0.2.x back-compat).
     if let Some(ref dev_key) = args.dev_api_key {
         use rand_core::{OsRng, RngCore};
         let mut salt = [0u8; 16];
@@ -110,6 +112,7 @@ pub async fn serve(args: &ServeArgs) -> Result<(), ServerError> {
                     endpoint: args.dev_endpoint.clone(),
                     api_key: dev_key.clone(),
                     model: args.dev_model.clone(),
+                    provider_kind: args.dev_provider_kind,
                 };
                 match session_key.seal(&secret) {
                     Ok(ciphertext) => {
@@ -127,6 +130,7 @@ pub async fn serve(args: &ServeArgs) -> Result<(), ServerError> {
                         tracing::info!(
                             endpoint = %args.dev_endpoint,
                             model = %args.dev_model,
+                            provider_kind = ?args.dev_provider_kind,
                             "--dev-api-key: synthetic session key injected at boot",
                         );
                     }

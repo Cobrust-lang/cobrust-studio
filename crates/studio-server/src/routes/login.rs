@@ -34,9 +34,16 @@ use studio_store::session::EncryptedBlob;
 
 use crate::AppState;
 use crate::error::RouteError;
-use crate::secret::{EndpointSecret, SCHEME, SecretError, SessionKey};
+use crate::secret::{EndpointSecret, ProviderKind, SCHEME, SecretError, SessionKey};
 
 /// Request body for `POST /api/login`.
+///
+/// ## M7 addition (ADR-0008)
+///
+/// `provider_kind` is `#[serde(default)]` so v0.2.x callers that omit the
+/// field continue to work with implicit `Anthropic`. `Synthetic` is rejected
+/// with 400 `invalid_provider_kind` — it is a CLI/dev-only construct with no
+/// real endpoint + key pair.
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
     /// LLM provider base URL (e.g. `"https://api.anthropic.com"`).
@@ -47,6 +54,9 @@ pub struct LoginRequest {
     pub model: String,
     /// Passphrase used to derive the AES-256 key via Argon2id. Not persisted.
     pub passphrase: String,
+    /// Provider API kind — defaults to `Anthropic` for v0.2.x back-compat.
+    #[serde(default)]
+    pub provider_kind: ProviderKind,
 }
 
 /// Response body for `POST /api/login` on success.
@@ -107,6 +117,15 @@ pub async fn login(
     payload: Result<Json<LoginRequest>, JsonRejection>,
 ) -> Result<Response, RouteError> {
     let Json(req) = payload.map_err(|e| RouteError::bad_request(e.body_text(), "invalid_body"))?;
+
+    // M7 (ADR-0008): reject Synthetic — it is a CLI/dev-only construct
+    // with no real-world endpoint + key pair.
+    if req.provider_kind == ProviderKind::Synthetic {
+        return Err(RouteError::bad_request(
+            "synthetic provider not valid for /api/login; use --dev-api-key for synthetic dispatch",
+            "invalid_provider_kind",
+        ));
+    }
 
     // Validate required fields.
     if req.endpoint.trim().is_empty() {
@@ -197,6 +216,7 @@ pub async fn login(
         endpoint: req.endpoint.trim().to_string(),
         api_key: req.api_key.trim().to_string(),
         model: req.model.trim().to_string(),
+        provider_kind: req.provider_kind,
     };
     let ciphertext = key.seal(&secret).map_err(|e| {
         tracing::error!(error = %e, "aead seal failed at login");
@@ -221,6 +241,7 @@ pub async fn login(
     tracing::info!(
         endpoint = %secret.endpoint,
         model = %secret.model,
+        provider_kind = ?secret.provider_kind,
         "login: session key derived and stored",
     );
 
