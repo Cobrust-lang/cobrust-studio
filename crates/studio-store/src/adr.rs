@@ -78,9 +78,19 @@ impl AdrSummary {
 }
 
 /// Full ADR — summary + body.
+///
+/// **Wire shape note (A5 reconcile):** the `summary` field carries
+/// `#[serde(flatten)]` so that JSON serialisation surfaces the summary
+/// fields (`adr_id`, `title`, `status`, `date`, `path`) at the top level
+/// of the `Adr` object, matching the M1 wire contract documented in
+/// `crates/studio-server/tests/adr_routes.rs` §"Detail shape" (expects
+/// `adr_id`/`title`/`status`/`date`/`body` flat). Without `flatten`, the
+/// emitted JSON nested everything under `"summary": {...}` and broke the
+/// integration tests.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Adr {
-    /// Embedded summary fields.
+    /// Embedded summary fields, flattened on the wire.
+    #[serde(flatten)]
     pub summary: AdrSummary,
     /// Markdown body *after* the closing `---` fence (no leading newline).
     pub body: String,
