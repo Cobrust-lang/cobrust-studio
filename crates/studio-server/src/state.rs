@@ -28,14 +28,18 @@ use std::sync::Arc;
 use studio_router::Router;
 use studio_store::Store;
 use time::OffsetDateTime;
+use tokio::sync::RwLock;
 
+use crate::secret::SessionKey;
 use crate::sse::EventHub;
 
 /// Application state shared across all Axum handlers.
 ///
 /// Clones are cheap: [`studio_store::Store`] is `Arc`-shared internally
 /// and the optional router is wrapped in [`Arc`] so cloning the state
-/// only bumps reference counts.
+/// only bumps reference counts. The `session_key` is behind an
+/// `Arc<RwLock<_>>` so the login route can write the derived key while
+/// dispatch routes hold concurrent read locks.
 #[derive(Clone, Debug)]
 pub struct AppState {
     /// Persistence layer (ADR-0004). Constructed by [`Store::open`] at
@@ -64,6 +68,26 @@ pub struct AppState {
     /// `/api/events` handler subscribes per-request. Cloning the state
     /// shares the same hub via `Arc` internally.
     pub events: EventHub,
+
+    /// In-memory AES-256 session key (ADR-0007 M6).
+    ///
+    /// Set by `POST /api/login` after Argon2id derivation + AES-GCM seal.
+    /// Cleared by `POST /api/logout`. Dropped on process restart.
+    ///
+    /// `None` → unauthenticated; `/api/dispatch` returns 401 `NoSession`.
+    /// `Some(key)` → authenticated; dispatch decrypts the `session_kv` blob
+    /// and passes the plaintext `EndpointSecret` to `AnthropicProvider::new`.
+    ///
+    /// The `Arc` is shared across `AppState` clones so all request handlers
+    /// see the same live key without a deep-copy per request.
+    pub session_key: Arc<RwLock<Option<SessionKey>>>,
+
+    /// When `true`, `GET /api/session/endpoint` is exposed (debug-only).
+    ///
+    /// Set by `--debug-session` CLI flag at boot. Never `true` in production
+    /// builds. The endpoint returns decrypted `endpoint` + `model` for E2E
+    /// test introspection (never the `api_key`).
+    pub debug_session: bool,
 }
 
 impl AppState {
@@ -72,6 +96,10 @@ impl AppState {
     /// Callers (`studio_server::serve`, tests, future bench harnesses)
     /// pass the already-opened [`Store`] and the optional [`Router`].
     /// Wave A3 always passes `None` for `router`.
+    ///
+    /// `session_key` initialises to `None` — the user must `POST /api/login`
+    /// (or the binary must start with `--dev-api-key`) to authenticate.
+    /// `debug_session` is `false` by default.
     #[must_use]
     pub fn new(store: Store, router: Option<Arc<Router>>, project_root: PathBuf) -> Self {
         Self {
@@ -80,6 +108,8 @@ impl AppState {
             project_root,
             started_at: OffsetDateTime::now_utc(),
             events: EventHub::new(),
+            session_key: Arc::new(RwLock::new(None)),
+            debug_session: false,
         }
     }
 
