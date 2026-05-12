@@ -15,7 +15,6 @@ workspace = true
 async-trait.workspace = true
 blake3.workspace = true
 futures.workspace = true
-hex.workspace = true
 rand.workspace = true
 reqwest.workspace = true
 serde.workspace = true
@@ -24,9 +23,13 @@ thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 toml.workspace = true
-tracing.workspace = true
-unicode-normalization.workspace = true
-uuid.workspace = true
+# Note: `hex`, `tracing`, `unicode-normalization`, `uuid` were lifted from
+# upstream cobrust-llm-router's Cargo.toml but the post-strip code path
+# does not use any of them (verified via grep `use $dep` / `$dep::` /
+# macro forms across crates/studio-router/src/). ADR-0006 addendum F-05
+# tagged them for Wave A2 polish; persona audit (Aleksandr) flagged them
+# still present. Removed M5 (post-tag polish). Workspace.dependencies
+# entries left in place — studio-store still uses tracing.
 
 [dev-dependencies]
 tempfile.workspace = true
