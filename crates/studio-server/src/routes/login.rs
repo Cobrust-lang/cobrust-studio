@@ -23,8 +23,8 @@
 
 use axum::Json;
 use axum::Router;
-use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -99,6 +99,56 @@ pub struct SessionEndpointResponse {
     // `api_key` is intentionally absent — even debug mode does not expose it.
 }
 
+/// Validate the body of a `POST /api/login` request.
+///
+/// Extracted so the login handler stays under the 100-line clippy
+/// ceiling — M8 added a persist-mirror tail that pushed it over.
+/// Returns Ok if every field passes the M7 + ADR-0008 invariants
+/// (no synthetic kind, non-empty endpoint / api_key / model,
+/// passphrase ≥ 8 chars). Error variants mirror the previous inline
+/// checks 1:1 so the integration test corpus does not need updating.
+fn validate_login_request(req: &LoginRequest) -> Result<(), RouteError> {
+    // M7 (ADR-0008): reject Synthetic — it is a CLI/dev-only construct
+    // with no real-world endpoint + key pair.
+    if req.provider_kind == ProviderKind::Synthetic {
+        return Err(RouteError::bad_request(
+            "synthetic provider not valid for /api/login; use --dev-api-key for synthetic dispatch",
+            "invalid_provider_kind",
+        ));
+    }
+    if req.endpoint.trim().is_empty() {
+        return Err(RouteError::bad_request(
+            "endpoint must be non-empty",
+            "invalid_body",
+        ));
+    }
+    if req.api_key.trim().is_empty() {
+        return Err(RouteError::bad_request(
+            "api_key must be non-empty",
+            "invalid_body",
+        ));
+    }
+    if req.model.trim().is_empty() {
+        return Err(RouteError::bad_request(
+            "model must be non-empty",
+            "invalid_body",
+        ));
+    }
+    if req.passphrase.is_empty() {
+        return Err(RouteError::bad_request(
+            "passphrase must be non-empty",
+            "invalid_body",
+        ));
+    }
+    if req.passphrase.len() < 8 {
+        return Err(RouteError::bad_request(
+            "passphrase must be at least 8 characters",
+            "passphrase_too_short",
+        ));
+    }
+    Ok(())
+}
+
 /// Build the login + session sub-router. Mounted under `/api`.
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -132,47 +182,7 @@ pub async fn login(
     payload: Result<Json<LoginRequest>, JsonRejection>,
 ) -> Result<Response, RouteError> {
     let Json(req) = payload.map_err(|e| RouteError::bad_request(e.body_text(), "invalid_body"))?;
-
-    // M7 (ADR-0008): reject Synthetic — it is a CLI/dev-only construct
-    // with no real-world endpoint + key pair.
-    if req.provider_kind == ProviderKind::Synthetic {
-        return Err(RouteError::bad_request(
-            "synthetic provider not valid for /api/login; use --dev-api-key for synthetic dispatch",
-            "invalid_provider_kind",
-        ));
-    }
-
-    // Validate required fields.
-    if req.endpoint.trim().is_empty() {
-        return Err(RouteError::bad_request(
-            "endpoint must be non-empty",
-            "invalid_body",
-        ));
-    }
-    if req.api_key.trim().is_empty() {
-        return Err(RouteError::bad_request(
-            "api_key must be non-empty",
-            "invalid_body",
-        ));
-    }
-    if req.model.trim().is_empty() {
-        return Err(RouteError::bad_request(
-            "model must be non-empty",
-            "invalid_body",
-        ));
-    }
-    if req.passphrase.is_empty() {
-        return Err(RouteError::bad_request(
-            "passphrase must be non-empty",
-            "invalid_body",
-        ));
-    }
-    if req.passphrase.len() < 8 {
-        return Err(RouteError::bad_request(
-            "passphrase must be at least 8 characters",
-            "passphrase_too_short",
-        ));
-    }
+    validate_login_request(&req)?;
 
     // Check for an existing blob — if present, the new passphrase must
     // successfully open it (proves the user knows the original passphrase
@@ -253,6 +263,24 @@ pub async fn login(
         *guard = Some(key);
     }
 
+    // M8 (ADR-0009): mirror the passphrase to the configured persist
+    // backend so the NEXT boot can re-derive the SessionKey without a
+    // /login prompt. For `--persist-session=none` this is a no-op
+    // (NullStore). Failures are logged but never bubble up — the user
+    // is already authenticated; failing the request because the
+    // keychain wrap couldn't write would be worse UX than just losing
+    // the auto-unlock feature.
+    //
+    // The NullStore default means EVERY login pings persist.save() —
+    // intentional, so the mirror is uniform across all three backends
+    // and the cost is one virtual call per login.
+    if let Err(e) = state.persist.save(&req.passphrase) {
+        tracing::warn!(
+            error = %e,
+            "M8 persist.save failed; login succeeded but next restart will NOT auto-unlock"
+        );
+    }
+
     tracing::info!(
         endpoint = %secret.endpoint,
         model = %secret.model,
@@ -263,24 +291,62 @@ pub async fn login(
     Ok((StatusCode::OK, Json(LoginResponse { status: "ok" })).into_response())
 }
 
+/// Query parameters for `POST /api/logout`.
+///
+/// M8 (ADR-0009) adds `?purge=true` semantics — when set, logout
+/// ALSO clears the configured persist backend (keychain entry / file).
+/// The default (no `purge` param OR `purge=false`) preserves the
+/// persist backend so the user can `/api/login` again without re-
+/// entering the passphrase. This matches the ADR-0009 §"On /api/
+/// logout" decision: regular logout is "drop the in-memory key";
+/// `?purge=true` is "fully forget this credential".
+#[derive(Debug, Deserialize)]
+pub struct LogoutQuery {
+    /// When `true`, clear the persist backend in addition to dropping
+    /// the in-memory key. Equivalent to a credential rotation
+    /// (passphrase + persist entry forgotten in one shot).
+    #[serde(default)]
+    pub purge: bool,
+}
+
 /// `POST /api/logout` handler.
 ///
 /// Drops the in-memory [`SessionKey`]. The `session_kv` blob is preserved on
 /// disk — only the passphrase is needed to re-derive on next login.
 ///
+/// M8 (ADR-0009): with `?purge=true`, also clears the persist backend
+/// (`AppState.persist.clear()`). For `--persist-session=none` (NullStore)
+/// the clear is a no-op; for `keychain` / `file` the backend entry is
+/// removed. Useful for "I'm handing this laptop back" / "I want a
+/// fresh /login flow next boot" workflows.
+///
 /// Returns 200 always (idempotent — logging out when already unauthenticated
 /// is not an error).
 #[allow(clippy::unused_async)]
-pub async fn logout(State(state): State<AppState>) -> Response {
+pub async fn logout(State(state): State<AppState>, Query(params): Query<LogoutQuery>) -> Response {
     let mut guard = state.session_key.write().await;
     let was_authenticated = guard.is_some();
     *guard = None;
     drop(guard);
 
     if was_authenticated {
-        tracing::info!("logout: session key dropped");
+        tracing::info!(purge = params.purge, "logout: session key dropped");
     } else {
-        tracing::debug!("logout: no active session (no-op)");
+        tracing::debug!(
+            purge = params.purge,
+            "logout: no active session (no-op for session key)"
+        );
+    }
+
+    // M8: purge the persist backend if requested. Failures are logged
+    // but never escalate — logout is idempotent and a failed clear()
+    // shouldn't make the response 500 (the in-memory key is gone
+    // either way, which is the primary contract of /api/logout).
+    if params.purge {
+        match state.persist.clear() {
+            Ok(()) => tracing::info!("M8 logout purge: persist backend cleared"),
+            Err(e) => tracing::warn!(error = %e, "M8 logout purge: persist clear failed"),
+        }
     }
 
     (StatusCode::OK, Json(serde_json::json!({ "status": "ok" }))).into_response()
