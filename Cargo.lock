@@ -2275,7 +2275,9 @@ name = "studio-server"
 version = "0.0.1"
 dependencies = [
  "axum",
+ "base64",
  "clap",
+ "futures",
  "http",
  "http-body-util",
  "reqwest",
@@ -2287,6 +2289,7 @@ dependencies = [
  "thiserror 1.0.69",
  "time",
  "tokio",
+ "tokio-stream",
  "tower",
  "tower-http",
  "tracing",
