@@ -313,6 +313,13 @@ impl Router {
                     })
                     .collect();
                 drop(tracker);
+                // `partial_cmp` only returns `None` on NaN. The EWMA
+                // tracker stores finite latencies (provider-observed
+                // wall-clock ms) or `f64::INFINITY` (sentinel for
+                // never-observed); neither path produces NaN. The
+                // `unwrap_or(Equal)` is therefore unreachable in
+                // practice but cheaper than an `.expect()` in the
+                // hot dispatch path. (Aleksandr v2 nit — M5.5 cycle.)
                 indexed
                     .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
                 indexed
