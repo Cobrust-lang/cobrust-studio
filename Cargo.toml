@@ -58,7 +58,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 axum = { version = "0.7", default-features = false, features = ["json", "tokio", "http1", "macros", "query"] }
 tower = "0.5"
 tower-http = { version = "0.6", default-features = false, features = ["trace", "cors", "fs"] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 # A4 — added for studio-server (Wave A4 routes):
 # base64 for EncryptedBlob wire transport on /api/auth/set-endpoint.
 base64 = "0.22"
@@ -66,6 +66,10 @@ base64 = "0.22"
 # `mime-guess` feature pulls in `mime_guess` so handlers can resolve
 # Content-Type from the embedded path without an extra workspace dep.
 rust-embed = { version = "8", features = ["mime-guess"] }
+# M6 — AEAD round-trip (ADR-0007). RustCrypto audited crates.
+aes-gcm = "0.10"
+argon2 = "0.5"
+rand_core = { version = "0.6", features = ["std"] }
 
 [profile.release]
 lto = "thin"

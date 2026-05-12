@@ -43,6 +43,10 @@ base64.workspace = true
 # `mime_guess` so the static-asset handler can resolve Content-Type from
 # the embedded path without re-declaring `mime_guess` at the workspace.
 rust-embed.workspace = true
+# M6 — AEAD round-trip (ADR-0007). RustCrypto audited crates (workspace pins).
+aes-gcm.workspace = true
+argon2.workspace = true
+rand_core.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -63,3 +67,5 @@ base64 = "0.22"
 # the proc-macro without depending on the router crate's transitively-
 # exposed copy (unstable across edition bumps).
 async-trait.workspace = true
+# M6 TEST corpus: wiremock for Anthropic API stub in secret_roundtrip tests.
+wiremock.workspace = true
