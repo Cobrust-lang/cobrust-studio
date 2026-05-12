@@ -276,8 +276,7 @@ export function subscribeEvents(
 		'adr_removed',
 		'finding_added',
 		'finding_modified',
-		'finding_removed',
-		'heartbeat'
+		'finding_removed'
 	];
 	for (const k of kinds) es.addEventListener(k, handler(k));
 	if (onError) es.onerror = onError;

@@ -7,6 +7,7 @@
 	- 503 router_not_configured → "Configure LLM endpoint" CTA → /login.
 -->
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { dispatchSse, ApiError } from '$lib/api';
 	import Button from '$lib/components/Button.svelte';
 	import { cn } from '$lib/util';
@@ -39,7 +40,7 @@
 		err = null;
 		routerMissing = false;
 		if (!prompt.trim()) {
-			err = { code: 'invalid_input', message: 'prompt is required' };
+			err = { code: 'invalid_body', message: 'prompt is required' };
 			return;
 		}
 		streaming = true;
@@ -86,6 +87,14 @@
 	function cancel() {
 		abortCtrl?.abort();
 	}
+
+	// F-M2-04: abort any in-flight dispatch when the user navigates
+	// away from /agent. Without this, the fetch + ReadableStream
+	// generator continue running in the background until the response
+	// ends, wasting upstream tokens.
+	onDestroy(() => {
+		abortCtrl?.abort();
+	});
 </script>
 
 <header class="mb-5">

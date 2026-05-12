@@ -118,6 +118,13 @@
 						Encrypted client-side (AES-GCM-256, M2 stub) before transit. Real AEAD scheme lands at
 						M3.
 					</p>
+					<p class="text-[0.7rem] text-amber-500 dark:text-amber-400">
+						⚠ M2 caveat: the server cannot decrypt the M2 stub blob yet. For working
+						dispatch, also set <code class="font-mono">ANTHROPIC_API_KEY</code> or
+						<code class="font-mono">OPENAI_API_KEY</code> env var before launching
+						<code class="font-mono">cobrust-studio serve</code>. The login form stores
+						the credential for M3+ when real AEAD lands.
+					</p>
 					<Button type="submit" disabled={submitting} class="mt-1">
 						{submitting ? 'Storing…' : 'Save endpoint'}
 					</Button>

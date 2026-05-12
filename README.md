@@ -19,14 +19,16 @@ Cobrust Studio is a **standalone control plane** for AI-driven development that 
 
 **Not** the Cobrust language. **Not** the Cobrust translator. Just the methodology, productized.
 
-## Quick start (after M2)
+## Quick start (build from source, M3+)
 
 ```bash
-# Download single binary
-curl -L https://github.com/cobrust-lang/cobrust-studio/releases/latest/download/cobrust-studio-$(uname -sm | tr ' ' '-').tar.gz | tar xz
+# Build the release binary (bakes web/build/ via rust-embed)
+git clone https://github.com/Cobrust-lang/cobrust-studio && cd cobrust-studio
+bash scripts/build-release.sh
+# → target/release/cobrust-studio (~9 MiB single binary)
 
-# Run pointing at a git repo
-./cobrust-studio serve --project ~/my-repo --port 7878
+# Run pointing at a git repo (dogfood Studio against itself):
+./target/release/cobrust-studio serve --project . --port 7878
 
 # Open browser
 open http://localhost:7878
@@ -34,16 +36,22 @@ open http://localhost:7878
 
 Login with custom endpoint + API key (OAuth deferred to M5).
 
-## Current status (M0)
+> **M2 status note**: `/login` stores an opaque AES-GCM stub blob;
+> real AEAD decrypt lands at M3 polish. For working dispatch today,
+> set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` env var before
+> launching the binary (router_init reads env first, blob second).
+> M4 release will close this loop.
 
-- ✅ Workspace scaffold + 3 crates building clean
-- ✅ 5 CI gates wired (fmt / clippy / build / test / doc-coverage)
-- ✅ 5 ADRs landed (ADR-0001..0005)
-- ✅ Constitution (`CLAUDE.md`) + bilingual READMEs
-- 🚧 M1 backend MVP (Axum routes + SSE dispatch) — Day 2
-- 🚧 M2 frontend MVP (SvelteKit + 4 pages) — Day 3
-- 🚧 M3 dogfood + polish + single binary — Day 4
-- 🚧 M4 v0.1.0 release — Day 5
+Pre-built release tarballs land at M4 (v0.1.0). Until then, build
+from source as above.
+
+## Current status (M3)
+
+- ✅ M0 — Workspace scaffold + 5 ADRs + 5-gate CI green (Day 1)
+- ✅ M1 — Backend MVP — Axum + 10 routes + SSE dispatch + studio-router lift (Day 2)
+- ✅ M2 — Frontend MVP — SvelteKit 5 + 5 pages + Vitest unit + Playwright e2e gated (Day 3)
+- ✅ M3 — Single-binary deployment via rust-embed + dogfood smoke (Day 4)
+- 🚧 M4 — v0.1.0 release tag + F19 release-readiness audit (Day 5)
 
 See [`CLAUDE.md`](CLAUDE.md) §6 milestones for the 5-day plan.
 

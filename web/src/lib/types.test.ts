@@ -225,7 +225,8 @@ const _evtRem: EventEnvelope = { kind: 'adr_removed', path: '/p/0001.md' };
 const _evtFAdded: EventEnvelope = { kind: 'finding_added', path: '/p/f.md' };
 const _evtFMod: EventEnvelope = { kind: 'finding_modified', path: '/p/f.md' };
 const _evtFRem: EventEnvelope = { kind: 'finding_removed', path: '/p/f.md' };
-const _evtHb: EventEnvelope = { kind: 'heartbeat' };
+// M3.1 (F-M2-05): no `heartbeat` typed event. SSE liveness via KeepAlive
+// comment frames only. Test fixture removed to match.
 
 // Silence unused-variable diagnostics — the fixtures exist only for
 // their type assignability, not for runtime use.
@@ -264,8 +265,7 @@ void [
 	_evtRem,
 	_evtFAdded,
 	_evtFMod,
-	_evtFRem,
-	_evtHb
+	_evtFRem
 ];
 
 describe('types compile-check', () => {
