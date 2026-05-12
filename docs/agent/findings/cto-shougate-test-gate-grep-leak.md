@@ -1,13 +1,20 @@
 ---
 doc_kind: finding
 finding_id: cto-shougate-test-gate-grep-leak
-last_verified_commit: 6775cce
+last_verified_commit: f1212f3
 discovered_by: studio-p7-a5-dev-opus47 (during Wave A5 dispatch — gates green on a5-dev branch but flagged 5 pre-existing test files failing on base 6775cce)
 severity: P1
-status: open
+status: closed_by_m4.1
 dependencies: []
 related: [f20-closure-last-verified-commit-enforcement]
 ---
+
+> **Closure 2026-05-12 (M4.1 守闸)**: `scripts/doc-coverage.sh` §6
+> now runs `cargo test --workspace --locked --no-fail-fast` and
+> explicitly greps `^test result: FAILED` to enforce the gate at
+> script level. F20 systemic enforcement complete — the broken
+> `grep "^test result" | wc -l` pattern that A4 merge tripped on
+> can no longer ship green. M3 review F-M3-01 verified.
 
 # Finding: CTO 守闸 test-gate grep leak — A4 merged with 9 failing tests
 

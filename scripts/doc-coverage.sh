@@ -105,4 +105,34 @@ for fnd in docs/agent/findings/*.md; do
 done
 ok "M0 — last_verified_commit is a real SHA (F20 enforced)"
 
+# --- 6. Test gate — script-enforces "no FAILED test groups" (M4.1 ---
+#         closes cto-shougate-test-gate-grep-leak finding).
+# Prior CTO 守闸 SOP used `grep "^test result" | wc -l` which counts
+# both "ok" and "FAILED" lines as "test groups." A4 merge shipped 9
+# failing tests silently. This gate exit-code-checks cargo test and
+# greps for explicit FAILED — exactly the proper-grep replacement
+# the cto-shougate finding's §"Actionable takeaway forward #3"
+# prescribed. Tied to F20: declared invariant ("5 gates green") now
+# has script-level enforcement on the test gate.
+if command -v cargo >/dev/null 2>&1; then
+    test_log=$(mktemp -t cobrust-studio-test.XXXXXX)
+    trap 'rm -f "$test_log"' EXIT
+    if cargo test --workspace --locked --no-fail-fast > "$test_log" 2>&1; then
+        : # cargo's own exit code already 0
+    else
+        cargo_exit=$?
+        echo "doc-coverage: cargo test exit=$cargo_exit (capturing FAILED count below)" >&2
+    fi
+    failed_count=$(grep -c '^test result: FAILED' "$test_log" || true)
+    if [ "${failed_count:-0}" -ne 0 ]; then
+        echo "doc-coverage: FAIL — cargo test reported $failed_count failed test groups (closes cto-shougate-test-gate-grep-leak)" >&2
+        grep -E '^test .* FAILED' "$test_log" | head -10 >&2 || true
+        exit 1
+    fi
+    ok_count=$(grep -c '^test result: ok' "$test_log" || echo 0)
+    ok "M0 — cargo test green ($ok_count ok groups, 0 FAILED; script-enforced per cto-shougate finding)"
+else
+    echo "doc-coverage: WARN — cargo not on PATH; skipping test gate. Run \`source \$HOME/.cargo/env\` before this script for full enforcement." >&2
+fi
+
 ok "all gates passed"
