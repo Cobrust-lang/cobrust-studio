@@ -4,6 +4,28 @@ All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+### Changed
+
+- **README** rewritten for v0.2.1 posture — replaces v0.1.2 status
+  snapshot, reflects 5-platform first-time green, lists the seal-salt
+  bug honestly in §"Honest status," renumbers design-partner priority
+  list (gates #1-#2 now crossed-off).
+
+- **`docs/outreach/show-hn-draft-v1.md`** rewritten to v2 reflecting
+  v0.2.1 + Sarah v3 verdict. Posting checklist boxes now all ticked
+  except the optional screenshot.
+
+- **`router_init.rs`** logs a deprecation warning when any provider
+  in `studio.toml` has a non-empty `api_key_env`. Closes Sarah v3
+  audit #2 ("v0.3.x: deprecation warning when api_key_env is non-
+  empty"). v0.3.x will introduce strict mode that errors instead.
+
+- **`routes/login.rs`** salt-generation order cleanup — defers salt
+  + derive to after the wrong-passphrase guard. Closes Sarah v3
+  audit #4 ("salt generated speculatively before existing-blob
+  check"). Happy path is now a single Argon2id derivation; the
+  existing-blob key is reused for the subsequent seal call.
+
 ## [0.2.1] — 2026-05-12
 
 **Release infrastructure patch.** v0.2.0 shipped 4 of 5 platform tarballs

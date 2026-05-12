@@ -142,6 +142,24 @@ async fn build_inner(project_root: &Path, store: &Store) -> Result<Option<Router
     let cfg =
         RouterConfig::from_toml_str(&toml_text).map_err(|e| InitError::Parse(e.to_string()))?;
 
+    // Sarah v3 audit #2: `api_key_env` in studio.toml is a second
+    // credential-resolution path that bypasses the /login flow. With M6
+    // AEAD round-trip shipped, the canonical credential path is /login →
+    // session_kv → in-memory SessionKey. Keep `api_key_env` working for
+    // backward compat + CI/headless flows but log a startup warning when
+    // any non-empty value is detected so operators have a clear migration
+    // signal. v0.3.x will introduce a strict mode that errors instead.
+    for (name, pcfg) in &cfg.providers {
+        if !pcfg.api_key_env.is_empty() {
+            tracing::warn!(
+                provider = name,
+                api_key_env = %pcfg.api_key_env,
+                "studio.toml `api_key_env` is deprecated in v0.2.x; v0.3.x will require /login or --dev-api-key. \
+                 See docs/human/en/secret-storage.md for migration.",
+            );
+        }
+    }
+
     // Fetch the encrypted-blob fallback once — it's the same value for
     // every non-synthetic provider (A5 stub model).
     let blob_bytes: Option<Vec<u8>> = store.session().get_endpoint().await?.map(|b| b.ciphertext);

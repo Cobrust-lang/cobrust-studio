@@ -188,19 +188,29 @@ specs.
 
 ---
 
-## What's in this repo right now (v0.1.2)
+## What's in this repo right now (v0.2.1)
 
-- ✅ 3 crates compile clean, ~196 tests pass (32 ok groups, 0 FAILED)
+- ✅ 3 crates compile clean, ~200 tests pass (33 ok groups, 0 FAILED)
 - ✅ 14 Playwright e2e specs (13 active + 1 STUDIO_E2E_ROUTER-gated; all pass)
+  + 2 dedicated /login e2e specs (login.spec.ts drives the SvelteKit
+  form; login-aead.spec.ts hits the API surface)
 - ✅ 2 Playwright dogfood specs (Studio managing its own ADRs — both pass)
 - ✅ Real-LLM e2e against an OpenAI-compatible endpoint — PASS
-- ✅ `scripts/build-release.sh` produces a 9.0 MiB self-contained binary
-- ✅ `scripts/smoke-dogfood.sh` end-to-end smoke (6 constitutional ADRs visible via `/api/adr`)
-- ✅ doc-coverage CI gate enforces 6 invariants (crate agent-docs / zh-en parity / ADR frontmatter / ADR id monotonic / `last_verified_commit` is a real git SHA / cargo test exit 0 AND 0 FAILED groups)
+- ✅ `scripts/build-release.sh` produces a ~9 MiB self-contained binary
+- ✅ `scripts/smoke-dogfood.sh` end-to-end 5-step smoke (incl. M6 `/api/login` round-trip)
+- ✅ doc-coverage CI gate enforces 7 invariants (crate agent-docs / zh-en parity / ADR frontmatter / ADR id monotonic / `last_verified_commit` is a real git SHA / `cargo fmt --check` / cargo test exit 0 AND 0 FAILED groups)
 - ✅ 5 findings filed (3 closed + 2 closed by the post-tag M4 audit)
-- ✅ Multi-platform tarballs in v0.1.3+ (linux x86_64 + aarch64, macOS arm64; macOS x86_64 + windows in 5-platform release.yml matrix)
-- ✅ M6: AEAD round-trip on `/login` shipped — AES-256-GCM + Argon2id; `--dev-api-key` escape hatch for CI/headless use
-- ⚠️ Single-user / single-project by design — no RBAC, no multi-tenancy in v0.1.x
+- ✅ **5-platform tarballs ship first-time green on v0.2.1**: linux
+  x86_64 + aarch64, macOS x86_64 + arm64, windows x86_64. macOS x86_64
+  cross-compiles from `macos-14` (Apple Silicon) using
+  `--target=x86_64-apple-darwin`, eliminating the `macos-13` runner-
+  queue dependency. Sarah v2 pilot-gate #3 closed.
+- ✅ M6: AEAD round-trip on `/login` shipped — AES-256-GCM + Argon2id
+  (m=64MiB / t=3 / p=1). Server-side derive; in-memory `SessionKey`;
+  re-derive round-trip exercised by `seal_then_re_derive_then_open`
+  regression test. `--dev-api-key` escape hatch for CI/headless use.
+  Sarah v2 pilot-gate #2 closed.
+- ⚠️ Single-user / single-project by design — no RBAC, no multi-tenancy in v0.2.x
 - ⚠️ Bus factor 1 (looking for design partners — see below)
 
 ---
@@ -217,11 +227,13 @@ one if you're already 80% of the way there.
 
 Top friction items design partners would file against me, in priority order:
 
-1. ~~**AEAD round-trip on `/login`** — kill the env-var workaround~~ ✅ shipped in M6
-2. **Linux + windows tarballs** via the CI matrix (release.yml landed; first cross-platform tag pending)
-3. **A `--multi-user` mode** with proper RBAC + audit log (post-MVP, M7+)
-4. **`task_tag` plumbing through `CompletionRequest`** (ADR-0006 §F-03 noted; partial today)
-5. **Persona simulation in CI** — already-run human-in-the-loop, not yet automated
+1. ~~**AEAD round-trip on `/login`** — kill the env-var workaround~~ ✅ shipped in M6 (v0.2.0)
+2. ~~**5-platform tarballs first-time green**~~ ✅ shipped in v0.2.1 (cross-compile patch)
+3. **Multi-provider `/login`** — today the form path hardcodes `AnthropicProvider`; OpenAI-compat endpoints (vLLM / DeepSeek / Together / OpenRouter / Groq) only resolve via the `studio.toml` static path. ADR-0008 spike in flight.
+4. **Persistent session across binary restart** — currently the in-memory `SessionKey` drops on restart and the user re-enters their passphrase. For systemd/Docker long-lived runs, wrap the key with OS keychain (macOS Keychain / freedesktop secret-service / Windows DPAPI). v0.3.x ADR pending.
+5. **A `--multi-user` mode** with proper RBAC + audit log (post-MVP, M7+)
+6. **`task_tag` plumbing through `CompletionRequest`** (ADR-0006 §F-03 noted; partial today)
+7. **Persona simulation in CI** — already-run human-in-the-loop (Mei / Aleksandr / Sarah v1-v3 audits all landed), not yet automated
 
 I'm `hakureirm` on GitHub. File issues with the `design-partner` label.
 
@@ -253,18 +265,28 @@ attribution"; upstream copyright headers are preserved on every lifted file.
 
 ## Honest status
 
-This is a 5-day MVP (built 2026-05-11 → 2026-05-12, single contributor).
-v0.1.0 and v0.1.1 both shipped known-broken — v0.1.0 had a critical SPA
-fallback bug
-([`Path<String>` on `Router::fallback`](docs/agent/findings/m4-release-readiness-spa-fallback-extractor.md));
-v0.1.1 had a stale `Cargo.lock`. Both were caught by the M4 release-readiness
-audit running hermetic Playwright + a clean-shell probe against the released
-binary — the audit pattern works as designed, catching things that
-intent-driven self-checks missed.
+This started as a 5-day MVP (built 2026-05-11 → 2026-05-12, single
+contributor) and has been continuously hardened since. The early
+honest mistakes:
 
-**v0.1.2 is the first usable tag**. The CHANGELOG names every regression by
-file:line and the gate that missed each one. If you'd prefer a year-old tag
-where you don't see the patch dance, this isn't your project.
+- **v0.1.0** shipped with a critical SPA fallback bug
+  ([`Path<String>` on `Router::fallback`](docs/agent/findings/m4-release-readiness-spa-fallback-extractor.md))
+- **v0.1.1** shipped with a stale `Cargo.lock`
+- **v0.2.0** shipped with a subtle crypto bug — `SessionKey::seal()`
+  packed a fresh random salt instead of the derive salt, silently
+  breaking the re-derive round-trip. Caught the day of release by
+  Playwright e2e test 2, fixed in `3753a2b` before any user touched
+  the broken release.
+
+Each was caught by the audit pattern (hermetic Playwright + clean-
+shell probe + persona-driven re-test) and named in the CHANGELOG by
+file:line.
+
+**v0.2.1 is the current stable tag.** It's the first one to ship all
+5 platform tarballs first-time green (Sarah v2 pilot-gate #3 closed).
+The CHANGELOG names every regression that came before it and the
+gate that missed each one. If you'd prefer a year-old tag where you
+don't see the patch dance, this isn't your project.
 
 The methodology discipline runs throughout the repo — see
 [`docs/agent/findings/cto-shougate-test-gate-grep-leak.md`](docs/agent/findings/cto-shougate-test-gate-grep-leak.md)

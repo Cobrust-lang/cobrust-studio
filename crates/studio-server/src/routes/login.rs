@@ -142,61 +142,55 @@ pub async fn login(
 
     // Check for an existing blob — if present, the new passphrase must
     // successfully open it (proves the user knows the original passphrase
-    // that sealed the existing blob). If not, this is a fresh login.
+    // that sealed the existing blob).
     let existing_blob = state.store.session().get_endpoint().await?;
 
-    // Generate a new salt for this seal operation.
-    let mut salt = [0u8; 16];
-    OsRng.fill_bytes(&mut salt);
-
-    // Derive the session key from passphrase + salt.
-    let key = SessionKey::derive(&req.passphrase, &salt).map_err(|e| {
-        tracing::error!(error = %e, "argon2id derivation failed");
-        RouteError::internal(format!("key derivation failed: {e}"))
-    })?;
-
-    // If there's an existing blob, verify the NEW key cannot open it
-    // (since the new key uses a new salt — it never can). Instead, we need
-    // to verify using the OLD salt. Re-read ADR-0007 §"Done means" #3:
+    // Compute the SessionKey. Two paths:
+    //   (a) Existing blob with the current scheme → re-derive from the
+    //       salt embedded in that blob (`blob[..16]`), verify by attempting
+    //       open(). If open fails → 400 wrong_passphrase. If it succeeds →
+    //       REUSE that key for the upcoming seal (avoids a second ~500ms
+    //       Argon2id derivation and keeps the salt stable across re-logins
+    //       with the same passphrase).
+    //   (b) No existing blob, or existing blob has a pre-M6 scheme → fresh
+    //       login. Generate a new salt and derive from scratch.
     //
-    //   "POST /api/login with mismatched passphrase against existing blob → 401"
-    //
-    // The intent is: if someone stored an endpoint with passphrase A, then
-    // posts /login with passphrase B, we should return 401 so they know
-    // the credential is already occupied by a different passphrase.
-    //
-    // Implementation: extract the salt FROM the existing blob (bytes 0..16),
-    // re-derive with that salt, and attempt open. If open fails → wrong
-    // passphrase for the existing slot → 401.
-    if let Some(ref blob) = existing_blob
+    // Sarah v3 audit #4: salt was previously generated speculatively before
+    // the wrong-passphrase guard ran, then discarded if the guard rejected.
+    // This refactor defers salt + derive to after the guard, so the unused-
+    // OsRng-output anti-pattern is gone and the happy path is a single derive.
+    let key = if let Some(ref blob) = existing_blob
         && blob.scheme == SCHEME
         && blob.ciphertext.len() >= 16
     {
         let mut existing_salt = [0u8; 16];
         existing_salt.copy_from_slice(&blob.ciphertext[..16]);
-        match SessionKey::derive(&req.passphrase, &existing_salt) {
-            Ok(existing_key) => {
-                if let Err(SecretError::Open(_)) = existing_key.open(&blob.ciphertext) {
-                    tracing::warn!(
-                        endpoint = %req.endpoint,
-                        "login rejected: passphrase does not match existing session_kv blob",
-                    );
-                    return Err(RouteError::BadRequest {
-                        message: "passphrase does not match existing credential blob".to_string(),
-                        code: "wrong_passphrase",
-                    });
-                }
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "failed to re-derive key for existing blob check");
-                // Non-fatal: proceed with fresh seal (existing blob may be
-                // a raw/pre-M6 blob with no salt in position 0..16).
-            }
+        let existing_key = SessionKey::derive(&req.passphrase, &existing_salt).map_err(|e| {
+            tracing::error!(error = %e, "argon2id derivation failed (existing-blob path)");
+            RouteError::internal(format!("key derivation failed: {e}"))
+        })?;
+        if let Err(SecretError::Open(_)) = existing_key.open(&blob.ciphertext) {
+            tracing::warn!(
+                endpoint = %req.endpoint,
+                "login rejected: passphrase does not match existing session_kv blob",
+            );
+            return Err(RouteError::BadRequest {
+                message: "passphrase does not match existing credential blob".to_string(),
+                code: "wrong_passphrase",
+            });
         }
-        // Existing blob with scheme != "aes-gcm-256/argon2id-v1" is a pre-M6
-        // raw stub. Per ADR-0007 §"Consequences §Migration", first M6 login
-        // overwrites it without passphrase check.
-    }
+        existing_key
+    } else {
+        // Fresh login (no blob OR pre-M6 raw stub per ADR-0007 §Migration —
+        // first M6 login overwrites a pre-M6 raw stub without passphrase
+        // check, since the raw stub has no salt at blob[..16] to verify with).
+        let mut salt = [0u8; 16];
+        OsRng.fill_bytes(&mut salt);
+        SessionKey::derive(&req.passphrase, &salt).map_err(|e| {
+            tracing::error!(error = %e, "argon2id derivation failed (fresh-login path)");
+            RouteError::internal(format!("key derivation failed: {e}"))
+        })?
+    };
 
     // Seal the EndpointSecret with the new key.
     let secret = EndpointSecret {
