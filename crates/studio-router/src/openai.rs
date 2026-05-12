@@ -52,7 +52,7 @@ impl OpenAiProvider {
         api_key: impl Into<String>,
     ) -> Result<Self, reqwest::Error> {
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(120))
+            .timeout(Duration::from_mins(2))
             .build()?;
         Ok(Self {
             name: name.into(),

@@ -22,9 +22,9 @@
 //! security degradation**, scoped to the wrap layer:
 //!
 //! - **Disk-only cold attacker (in-scope, ADR-0007 #1)**: still defeated
-//!   by the wrap layer. The OS keychain entry is not on disk (it's
-//!   stored in a separate per-user encrypted store); the 0600 file is
-//!   readable only by the running user's UID.
+//!   by the keychain backend. The 0600 file backend weakens this posture:
+//!   offline access to both the passphrase file and `session_kv` blob is
+//!   enough to unlock the stored endpoint secret.
 //! - **Disk + OS-user-access attacker (out-of-scope, ADR-0007 #3)**:
 //!   same as the M6 "running-process memory dump" out-of-scope —
 //!   this attacker has the same trust level as the server process.
@@ -89,7 +89,7 @@ pub enum PersistBackend {
     /// OS keychain backend (Apple Security framework / freedesktop
     /// secret-service / Windows Credential Manager).
     Keychain,
-    /// Encrypted-by-OS-permissions file at the path supplied via
+    /// Plaintext file at the path supplied via
     /// `--persist-session-file <PATH>`. Mode `0600` (Unix-only check).
     File,
 }
@@ -129,6 +129,13 @@ pub enum PersistError {
     InsecurePermissions {
         /// The octal permission bits that were read off the file.
         mode: u32,
+    },
+
+    /// File-backend rejected a symlink, directory, or other non-regular path.
+    #[error("passphrase file path must be a regular file, not {kind}")]
+    InvalidFileType {
+        /// Human-readable file type (`symlink`, `directory`, etc.).
+        kind: &'static str,
     },
 
     /// Backend has not been initialised — used as a defensive check for
@@ -333,6 +340,54 @@ impl FileStore {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    #[cfg(unix)]
+    fn metadata_no_symlink(&self) -> Result<Option<fs::Metadata>, PersistError> {
+        match fs::symlink_metadata(&self.path) {
+            Ok(meta) => {
+                let file_type = meta.file_type();
+                if file_type.is_symlink() {
+                    return Err(PersistError::InvalidFileType { kind: "symlink" });
+                }
+                if !file_type.is_file() {
+                    let kind = if file_type.is_dir() {
+                        "directory"
+                    } else {
+                        "non-regular file"
+                    };
+                    return Err(PersistError::InvalidFileType { kind });
+                }
+                Ok(Some(meta))
+            }
+            Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(source) => Err(PersistError::File {
+                path: self.path.clone(),
+                source,
+            }),
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn metadata_no_symlink(&self) -> Result<Option<fs::Metadata>, PersistError> {
+        match fs::metadata(&self.path) {
+            Ok(meta) => {
+                if !meta.is_file() {
+                    let kind = if meta.is_dir() {
+                        "directory"
+                    } else {
+                        "non-regular file"
+                    };
+                    return Err(PersistError::InvalidFileType { kind });
+                }
+                Ok(Some(meta))
+            }
+            Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(source) => Err(PersistError::File {
+                path: self.path.clone(),
+                source,
+            }),
+        }
+    }
 }
 
 impl PersistStore for FileStore {
@@ -350,17 +405,21 @@ impl PersistStore for FileStore {
             })?;
         }
 
+        let _ = self.metadata_no_symlink()?;
+
         // Atomic-ish write: truncate-on-open, write, sync, drop the
         // handle. On Unix we also set mode 0o600 at open() so the file
         // is never readable by group/other even between open and write.
         #[cfg(unix)]
         let mut file = {
             use std::os::unix::fs::OpenOptionsExt;
+            let flags = libc::O_NOFOLLOW;
             std::fs::OpenOptions::new()
                 .create(true)
                 .write(true)
                 .truncate(true)
                 .mode(0o600)
+                .custom_flags(flags)
                 .open(&self.path)
                 .map_err(|source| PersistError::File {
                     path: self.path.clone(),
@@ -397,10 +456,11 @@ impl PersistStore for FileStore {
         {
             use std::os::unix::fs::PermissionsExt;
             let perms = fs::Permissions::from_mode(0o600);
-            fs::set_permissions(&self.path, perms).map_err(|source| PersistError::File {
-                path: self.path.clone(),
-                source,
-            })?;
+            file.set_permissions(perms)
+                .map_err(|source| PersistError::File {
+                    path: self.path.clone(),
+                    source,
+                })?;
         }
 
         Ok(())
@@ -408,16 +468,11 @@ impl PersistStore for FileStore {
 
     fn load(&self) -> Result<Option<Zeroizing<String>>, PersistError> {
         // Missing file → Ok(None). Distinguishes "first boot" from "I/O
-        // error reading an existing file".
-        match self.path.try_exists() {
-            Ok(false) => return Ok(None),
-            Err(source) => {
-                return Err(PersistError::File {
-                    path: self.path.clone(),
-                    source,
-                });
-            }
-            Ok(true) => {}
+        // error reading an existing file". Reject symlinks / directories
+        // before reading passphrase bytes.
+        let metadata = self.metadata_no_symlink()?;
+        if metadata.is_none() {
+            return Ok(None);
         }
 
         // Permission gate — Unix only. ADR-0009 §"Wire detail — file
@@ -427,10 +482,7 @@ impl PersistStore for FileStore {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            let meta = self.path.metadata().map_err(|source| PersistError::File {
-                path: self.path.clone(),
-                source,
-            })?;
+            let meta = metadata.expect("metadata checked above");
             let mode = meta.mode() & 0o777;
             if mode != 0o600 {
                 return Err(PersistError::InsecurePermissions { mode });
@@ -447,14 +499,12 @@ impl PersistStore for FileStore {
     }
 
     fn clear(&self) -> Result<(), PersistError> {
-        // Missing file → already cleared, idempotent.
-        match self.path.try_exists() {
-            Ok(false) => Ok(()),
-            Err(source) => Err(PersistError::File {
-                path: self.path.clone(),
-                source,
-            }),
-            Ok(true) => fs::remove_file(&self.path).map_err(|source| PersistError::File {
+        // Missing file → already cleared, idempotent. Reject symlinks /
+        // directories before deletion so `clear()` only removes the
+        // configured regular passphrase file.
+        match self.metadata_no_symlink()? {
+            None => Ok(()),
+            Some(_) => fs::remove_file(&self.path).map_err(|source| PersistError::File {
                 path: self.path.clone(),
                 source,
             }),
@@ -567,6 +617,44 @@ mod tests {
             }
             other => panic!("expected InsecurePermissions, got {other:?}"),
         }
+    }
+
+    /// `FileStore` rejects symlink paths on every operation so the
+    /// passphrase backend cannot truncate or delete an unintended target.
+    #[cfg(unix)]
+    #[test]
+    fn file_store_rejects_symlink_path() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let target = tmp.path().join("target-passphrase");
+        let link = tmp.path().join("passphrase-link");
+        fs::write(&target, "target").expect("write target");
+        symlink(&target, &link).expect("symlink");
+
+        let store = FileStore::new(link);
+
+        for op in ["save", "load", "clear"] {
+            let err = match op {
+                "save" => store
+                    .save("new-passphrase")
+                    .expect_err("symlink save must fail"),
+                "load" => store.load().expect_err("symlink load must fail"),
+                "clear" => store.clear().expect_err("symlink clear must fail"),
+                _ => unreachable!(),
+            };
+            match err {
+                PersistError::InvalidFileType { kind } => assert_eq!(kind, "symlink"),
+                other => panic!("expected InvalidFileType symlink, got {other:?}"),
+            }
+        }
+
+        assert!(target.exists(), "symlink target must remain untouched");
+        assert_eq!(
+            fs::read_to_string(target).expect("read target"),
+            "target",
+            "symlink target content must remain untouched"
+        );
     }
 
     /// `FileStore::clear` removes the file. After clear, load returns

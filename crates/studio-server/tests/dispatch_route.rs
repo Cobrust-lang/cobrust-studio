@@ -120,7 +120,7 @@ async fn dispatch_503_body_is_json_envelope() {
     let resp = oneshot_post_json(&app, "/api/dispatch", &sample_completion_request()).await;
     let (status, body) = status_and_json(resp).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert!(body.is_object(), "503 body must be a JSON object: {body}",);
+    assert!(body.is_object(), "503 body must be a JSON object: {body}");
     assert!(body.get("error").is_some());
     assert!(body.get("code").is_some());
 }

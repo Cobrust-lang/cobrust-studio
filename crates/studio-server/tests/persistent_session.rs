@@ -35,13 +35,15 @@ mod common;
 
 use std::sync::Arc;
 
+use std::io;
+
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use common::oneshot_post_json;
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use studio_router::{Router as LlmRouter, RouterBuilder, RouterConfig};
-use studio_server::persist::{FileStore, KeychainStore, NullStore, PersistStore};
+use studio_server::persist::{FileStore, KeychainStore, NullStore, PersistError, PersistStore};
 use studio_server::{AppState, SyntheticProvider, build_router};
 use studio_store::Store;
 use tower::ServiceExt;
@@ -571,7 +573,49 @@ async fn orphaned_persist_with_no_blob_auto_clears() {
     );
 }
 
-// ─── Test 7: keychain path survives restart (#[ignore] for CI) ─────────────
+// ─── Test 7: logout purge surfaces backend clear failure ───────────────────
+
+struct FailingClearStore;
+
+impl PersistStore for FailingClearStore {
+    fn save(&self, _passphrase: &str) -> Result<(), PersistError> {
+        Ok(())
+    }
+
+    fn load(&self) -> Result<Option<zeroize::Zeroizing<String>>, PersistError> {
+        Ok(None)
+    }
+
+    fn clear(&self) -> Result<(), PersistError> {
+        Err(PersistError::File {
+            path: std::path::PathBuf::from("/tmp/cobrust-studio-test-failing-clear"),
+            source: io::Error::other("clear failed for test"),
+        })
+    }
+}
+
+#[tokio::test]
+async fn logout_purge_failure_returns_error() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path().to_path_buf();
+    let persist: Arc<dyn PersistStore + Send + Sync> = Arc::new(FailingClearStore);
+    let (_state, app) = boot_with_persist(root, persist).await;
+
+    let (status, body) = do_logout(&app, true).await;
+
+    assert_eq!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "purge=true must not return ok when persist.clear fails"
+    );
+    assert_eq!(
+        body["code"].as_str(),
+        Some("persist_purge_failed"),
+        "purge failure must be machine-detectable"
+    );
+}
+
+// ─── Test 8: keychain path survives restart (#[ignore] for CI) ─────────────
 
 /// Same as `file_persist_path_survives_restart` but uses the OS
 /// keychain backend. `#[ignore]`'d by default because CI runners may

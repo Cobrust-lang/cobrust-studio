@@ -157,7 +157,7 @@ async fn set_endpoint_malformed_returns_4xx() {
         status.is_client_error(),
         "POST /api/auth/set-endpoint with empty body must be 4xx, got {status}: {body}",
     );
-    assert!(body.is_object(), "4xx body must be a JSON object: {body}",);
+    assert!(body.is_object(), "4xx body must be a JSON object: {body}");
 }
 
 #[tokio::test]

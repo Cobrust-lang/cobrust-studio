@@ -70,9 +70,10 @@ for some **at-rest security degradation**, scoped to the wrap layer:
 
 1. **Disk-only cold attacker (in-scope today)**: needs the
    passphrase. M8 preserves this for the **OS keychain** path
-   (keychain entry is OS-user-scoped) and the **encrypted passphrase
-   file with 0600 permissions** path (file readable only by the
-   server process's UID).
+   (keychain entry is OS-user-scoped). The **0600 plaintext file**
+   fallback weakens this posture: an offline attacker who obtains both
+   the passphrase file and `session_kv` blob can unlock the stored
+   endpoint secret.
 2. **Disk + OS-user-access attacker**: this attacker can read both
    the keychain (it's their user) and the session_kv blob, OR can
    read both the 0600 file and the blob. **M8 cannot defend against
@@ -86,10 +87,9 @@ for some **at-rest security degradation**, scoped to the wrap layer:
    don't prescribe (each user's deployment is different).
 
 The fundamental security property: **disk theft alone is still
-defeated by the M8 wrap layer**. The wrap secret (keychain entry OR
-0600 file passphrase) is not on the disk image; only the AES-256-
-GCM blob is. If you `dd` the disk and walk away with the bytes, you
-still can't decrypt without the wrap secret.
+defeated only by the keychain backend**. The file backend is an
+operator-chosen fallback for deployments without a usable keychain;
+it trades cold-disk-theft posture for restart survival.
 
 ## Options considered
 
@@ -139,7 +139,7 @@ Wire flow:
   keychain access by default. Same fallback applies.
 - ~1.2 MB binary size add for the `keyring` crate + dependencies.
 
-### Option B — Encrypted passphrase file (0600, fs::permissions)
+### Option B — Plaintext passphrase file (0600, fs::permissions)
 
 Store the passphrase in a file under `~/.config/cobrust-studio/
 passphrase` (or `$COBRUST_STUDIO_PASSPHRASE_FILE` if set) with

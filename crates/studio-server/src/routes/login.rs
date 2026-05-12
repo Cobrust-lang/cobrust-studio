@@ -320,10 +320,14 @@ pub struct LogoutQuery {
 /// removed. Useful for "I'm handing this laptop back" / "I want a
 /// fresh /login flow next boot" workflows.
 ///
-/// Returns 200 always (idempotent — logging out when already unauthenticated
-/// is not an error).
+/// Returns 200 for idempotent in-memory logout. If `?purge=true` cannot
+/// clear the persist backend, returns 500 so callers don't get a false
+/// "fully forgotten" signal.
 #[allow(clippy::unused_async)]
-pub async fn logout(State(state): State<AppState>, Query(params): Query<LogoutQuery>) -> Response {
+pub async fn logout(
+    State(state): State<AppState>,
+    Query(params): Query<LogoutQuery>,
+) -> Result<Response, RouteError> {
     let mut guard = state.session_key.write().await;
     let was_authenticated = guard.is_some();
     *guard = None;
@@ -338,18 +342,22 @@ pub async fn logout(State(state): State<AppState>, Query(params): Query<LogoutQu
         );
     }
 
-    // M8: purge the persist backend if requested. Failures are logged
-    // but never escalate — logout is idempotent and a failed clear()
-    // shouldn't make the response 500 (the in-memory key is gone
-    // either way, which is the primary contract of /api/logout).
     if params.purge {
-        match state.persist.clear() {
-            Ok(()) => tracing::info!("M8 logout purge: persist backend cleared"),
-            Err(e) => tracing::warn!(error = %e, "M8 logout purge: persist clear failed"),
+        if let Err(e) = state.persist.clear() {
+            tracing::error!(error = %e, "M8 logout purge: persist clear failed");
+            return Ok((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "persist backend purge failed",
+                    "code": "persist_purge_failed"
+                })),
+            )
+                .into_response());
         }
+        tracing::info!("M8 logout purge: persist backend cleared");
     }
 
-    (StatusCode::OK, Json(serde_json::json!({ "status": "ok" }))).into_response()
+    Ok((StatusCode::OK, Json(serde_json::json!({ "status": "ok" }))).into_response())
 }
 
 /// `GET /api/session/status` handler.

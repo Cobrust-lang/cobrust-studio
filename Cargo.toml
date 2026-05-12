@@ -96,6 +96,7 @@ keyring = { version = "3", default-features = false, features = ["apple-native",
 # String>` wipes the underlying `Vec<u8>` heap allocation on drop so a
 # subsequent allocation reuse cannot leak the old bytes.
 zeroize = { version = "1.8", features = ["std", "zeroize_derive"] }
+libc = "0.2"
 
 [profile.release]
 lto = "thin"

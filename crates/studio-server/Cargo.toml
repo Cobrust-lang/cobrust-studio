@@ -50,6 +50,8 @@ rand_core.workspace = true
 # M8 — persistent session across binary restart (ADR-0009).
 keyring.workspace = true
 zeroize.workspace = true
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
