@@ -4,7 +4,53 @@ All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+### Added
+
+- **Mei v3 — release-notes auto-wiring + dynamic /login footer**
+  (`c233367`):
+  - `release.yml` now extracts the matching `## [x.y.z]` CHANGELOG
+    section into `release-notes.md` (awk one-liner on ubuntu-latest
+    runner) and feeds it to `softprops/action-gh-release@v2` via
+    `body_path:`. Future tags get release-page bodies wired
+    automatically. **Closes Mei v3 P1** (the empty-release-body
+    pre-fix would have been a must-fix-before-HN-post issue).
+  - v0.2.0 / v0.2.1 / v0.3.0 release pages backfilled via
+    `gh release edit --notes-file` (one-time manual fix).
+  - SvelteKit `/login` footer now calls `getVersion()` on mount and
+    renders `v.studio_server` — always matches the running binary.
+    **Closes Mei v3 P2** ("v0.1.0" hardcoded footer drift).
+  - README §"Try it" reordered to lead with the pre-built tarball
+    path (~60s, no Rust/Node prereqs); build-from-source demoted
+    to alternative sub-section. **Closes Mei v3 P2** (tarball-
+    first should be the primary path for non-Rust audience).
+  - `/login` passphrase placeholder text "used to derive the AEAD
+    key" → "encrypts your API key at rest" — Python-data-scientist-
+    friendly. **Closes Mei v3 P3** (AEAD jargon leak).
+  - README §"Honest status" v0.2.0 crypto-bug paragraph now links
+    to `docs/agent/findings/m6-aead-seal-salt-mismatch.md` (matches
+    SPA fallback bug link pattern). **Closes Mei v3 P3** (audit
+    trail discoverable).
+  - "What's in this repo right now" / "current stable tag" wording
+    bumped to v0.3.0.
+
 ### Changed
+
+- **Aleksandr v3 cargo-audit hard-fail + `SecretError`
+  non-exhaustive** (`79ba7bd`):
+  - `ci.yml::cargo audit` step upgraded from `--deny warnings ||
+    true` (M5 soft-warn) to `--deny warnings --ignore
+    RUSTSEC-2023-0071`. Hard-fails on any NEW advisory; the single
+    ignore is the Marvin Attack on `rsa 0.9.x` pulled transitively
+    via `sqlx-mysql 0.8.6` (unreachable at runtime since Studio
+    uses sqlx only via the `sqlite` feature). Re-evaluate when
+    `sqlx 0.9` stable lands. **Closes Aleksandr v3 P3 #4**.
+  - `SecretError::UnknownScheme` gains `#[allow(dead_code)]` + a
+    documented "reserved for future scheme-guard" docstring. The
+    variant is preserved because v2+ AEAD scheme transitions
+    (chacha20poly1305 / Argon2id param rev) will surface unknown
+    schemes through it. `SecretError` enum gains `#[non_exhaustive]`
+    so future variants don't break downstream match arms. **Closes
+    Aleksandr v3 P3 #5**.
 
 - **Aleksandr v3 audit hardening** — Rust-senior code review of the
   M6/M7 crypto surface surfaced 6 actionable items, all landed:
