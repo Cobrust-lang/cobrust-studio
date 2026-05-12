@@ -29,6 +29,6 @@ the same atomic commit as the change it justifies.
 | [0008](0008-multi-provider-login.md) | M7 multi-provider /login — Anthropic + OpenAI-compatible via the SvelteKit form | accepted | 2026-05-12 |
 | [0009](0009-persistent-session-across-restart.md) | M8 persistent session across binary restart — OS keychain wrap + passphrase-file fallback | accepted | 2026-05-12 |
 | [0010](0010-dispatch-context-task-tag.md) | M9 DispatchContext — task_tag plumbing + extensible dispatch metadata | accepted | 2026-05-12 |
-| [0011](0011-i18n-zh-en-toggle.md) | M10 i18n — zh/en UI language toggle | proposed | 2026-05-12 |
+| [0011](0011-i18n-zh-en-toggle.md) | M10 i18n — zh/en UI language toggle | accepted | 2026-05-12 |
 | [0012](0012-agent-loop-tool-calls.md) | M11 agent-loop tool-call environment — built-in tools + iterative dispatch | proposed | 2026-05-12 |
 | [0013](0013-tauri-desktop-runtime.md) | Tauri desktop runtime — desktop-first shell around the Studio UI | accepted | 2026-05-13 |

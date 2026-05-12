@@ -8,6 +8,8 @@
 	import '../app.css';
 	import { page } from '$app/stores';
 	import { appState } from '$lib/store.svelte';
+	import { locale, setLocale, t } from '$lib/i18n';
+	import type { Locale, MessageKey } from '$lib/i18n';
 	import { cn } from '$lib/util';
 	import type { Snippet } from 'svelte';
 	import { onMount } from 'svelte';
@@ -39,11 +41,15 @@
 		applyTheme(theme);
 	}
 
-	const navItems = [
-		{ href: '/adr', label: 'ADRs' },
-		{ href: '/finding', label: 'Findings' },
-		{ href: '/agent', label: 'Agent' },
-		{ href: '/ledger', label: 'Ledger' }
+	function chooseLocale(next: Locale) {
+		setLocale(next);
+	}
+
+	const navItems: { href: string; label: MessageKey }[] = [
+		{ href: '/adr', label: 'nav.adrs' },
+		{ href: '/finding', label: 'nav.findings' },
+		{ href: '/agent', label: 'nav.agent' },
+		{ href: '/ledger', label: 'nav.ledger' }
 	];
 
 	let currentPath = $derived($page.url.pathname);
@@ -72,7 +78,7 @@
 									: 'text-muted-foreground hover:text-foreground hover:bg-secondary/60'
 							)}
 						>
-							{item.label}
+							{$t(item.label)}
 						</a>
 					{/each}
 				</div>
@@ -97,23 +103,45 @@
 							'inline-flex h-2 w-2 rounded-full',
 							appState.project ? 'bg-[hsl(var(--ok))]' : 'bg-[hsl(var(--err))]'
 						)}
-						title={appState.project ? 'Server reachable' : 'Server unreachable'}
+						title={appState.project ? $t('nav.serverReachable') : $t('nav.serverUnreachable')}
 					></span>
+					<div class="flex rounded-md bg-secondary p-0.5">
+						<button
+							type="button"
+							onclick={() => chooseLocale('en')}
+							class={cn(
+								'rounded px-1.5 py-0.5 text-[0.65rem] font-medium',
+								$locale === 'en' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'
+							)}
+						>
+							EN
+						</button>
+						<button
+							type="button"
+							onclick={() => chooseLocale('zh')}
+							class={cn(
+								'rounded px-1.5 py-0.5 text-[0.65rem] font-medium',
+								$locale === 'zh' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'
+							)}
+						>
+							中
+						</button>
+					</div>
 					<button
 						type="button"
 						onclick={toggleTheme}
 						class="rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/60"
-						aria-label="Toggle theme"
-						title="Toggle theme"
+						aria-label={$t('nav.toggleTheme')}
+						title={$t('nav.toggleTheme')}
 					>
 						{theme === 'dark' ? '☾' : '☀'}
 					</button>
 					<a
 						href="/login"
 						class="rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/60"
-						title="Endpoint settings"
+						title={$t('nav.endpointSettings')}
 					>
-						endpoint
+						{$t('nav.endpoint')}
 					</a>
 				</div>
 			</nav>

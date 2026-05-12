@@ -5,6 +5,7 @@
 	needed for the supported browser matrix.
 -->
 <script lang="ts">
+	import { t } from '$lib/i18n';
 	import type { Snippet } from 'svelte';
 
 	interface Props {
@@ -63,7 +64,7 @@
 						type="button"
 						onclick={close}
 						class="text-muted-foreground hover:text-foreground text-lg leading-none"
-						aria-label="Close"
+						aria-label={$t('common.close')}
 					>
 						×
 					</button>

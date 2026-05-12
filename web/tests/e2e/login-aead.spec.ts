@@ -56,9 +56,7 @@ test('GET /api/session/status returns authenticated=false before login', async (
  * ADR-0007 §"Done means" item 3 primary assertion: env-var workaround no
  * longer required for the authenticated state.
  */
-test('POST /api/login stores session key — no ANTHROPIC_API_KEY required', async ({
-	request
-}) => {
+test('POST /api/login stores session key — no ANTHROPIC_API_KEY required', async ({ request }) => {
 	const baseURL = studioBaseURL();
 
 	// Login with a synthetic endpoint (no real provider call needed for this test).

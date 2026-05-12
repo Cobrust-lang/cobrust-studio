@@ -27,8 +27,9 @@ work** — not toy demos — you eventually want answers to:
 1. *What did the agents decide?* → ADRs (one markdown file per decision)
 2. *What went wrong?* → findings (one markdown file per failure / dead end / benchmark surprise)
 3. *Where did the tokens go?* → ledger (one JSONL line per LLM dispatch — provider, model, cost, latency)
-4. *Are we drifting from the plan?* → live `/api/events` SSE stream as ADRs and findings get added
-5. *Is the methodology actually being followed?* → a 5-gate CI script that fails the merge if it isn't
+4. *Can Chinese-native teams use the UI directly?* → built-in `[ EN | 中 ]` toggle across the core pages
+5. *Are we drifting from the plan?* → live `/api/events` SSE stream as ADRs and findings get added
+6. *Is the methodology actually being followed?* → a 5-gate CI script that fails the merge if it isn't
 
 Cobrust Studio is moving to a desktop-first Tauri shell around the same
 SvelteKit UI and Rust/Axum backend. The v0.3.x distribution is still a 9 MiB
@@ -88,7 +89,9 @@ cd cobrust-studio-v0.3.0-aarch64-apple-darwin
 open http://localhost:7878
 ```
 
-You should see Studio's 5 pages:
+You should see Studio's 5 pages. Use the top-right `[ EN | 中 ]`
+toggle to switch the UI between English and Chinese; the choice persists
+across reloads.
 
 - **/login** — paste your LLM endpoint + API key (custom endpoint or OpenAI-compatible)
 - **/adr** — list/detail/create the 6+ ADRs that live in this repo (`docs/agent/adr/`)

@@ -63,13 +63,13 @@ The queue is therefore resequenced around a new runtime foundation wave:
 
 ### M10 — i18n zh/en UI toggle (ADR-0011)
 
-- **Status**: Phase 1 spike landed (`102198c`); Phase 2 P9 dispatch
-  queued after M9T so the language toggle is built inside the runtime
-  shell the user wants.
-- **Scope**: Custom Svelte 5 store + en/zh dicts, top-right
-  `[ EN | 中 ]` toggle, localStorage persistence, ~80-150 keys initial
-  scope (5-page chrome only).
-- **Estimated**: ~90-120 min Sonnet 4.6.
+- **Status**: completed locally after M9; not pushed from this checkout.
+- **Scope shipped**: Custom Svelte 5 store + typed en/zh dicts,
+  `[ EN | 中 ]` toggle in app chrome and login screen, localStorage
+  persistence, page chrome extraction for `/login`, `/adr`, `/agent`,
+  `/finding`, `/ledger`, shared modal close label, Vitest coverage
+  for default locale / persistence / interpolation, and client-only
+  Playwright coverage for toggle persistence.
 - **Closes**: User dogfood feedback 2026-05-12 evening #3 ("没有中英文切换").
 
 ### M11 — Agent-loop tool-call environment (ADR-0012)

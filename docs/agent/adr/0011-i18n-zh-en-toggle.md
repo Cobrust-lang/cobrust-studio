@@ -1,7 +1,7 @@
 ---
 adr_id: "0011"
 title: M10 i18n — zh/en UI language toggle
-status: proposed
+status: accepted
 date: 2026-05-12
 supersedes: []
 superseded_by: []

@@ -14,7 +14,9 @@ Login with your LLM provider's API endpoint + key. Point at a git repo.
 Studio orchestrates AI agents, captures every decision as an ADR,
 every failure as a finding, and every dispatch in a token ledger. M9 adds
 optional `task_tag` dispatch metadata so the ledger can be analysed by
-work type without changing the provider request shape.
+work type without changing the provider request shape. M10 adds a
+visible `[ EN | 中 ]` UI toggle so the login and five core pages can run
+in English or Chinese.
 
 ## Status
 
@@ -23,8 +25,9 @@ work type without changing the provider request shape.
 - **M2 — Frontend MVP**: SvelteKit UI, 4 core pages.
 - **M3 — Dogfood + polish**: Studio manages its own ADRs via Studio UI.
 - **M4 — v0.1.0 release**: single binary, demo, external review.
-- **M9T/M9 — v0.4.x desktop + ledger metadata**: Tauri shell,
-  persistent session, and `task_tag` ledger plumbing.
+- **M9T/M9/M10 — v0.4.x desktop + ledger metadata + i18n**: Tauri
+  shell, persistent session, `task_tag` ledger plumbing, and the zh/en UI
+  toggle.
 
 5-day target from M0 to M4. See [`../../../CLAUDE.md`](../../../CLAUDE.md) §6.
 
@@ -59,8 +62,10 @@ See `../../agent/adr/` for design decisions.
 
 ## Languages
 
-- English: `docs/human/en/` (this directory)
-- 中文: `docs/human/zh/`
+- UI: use the `[ EN | 中 ]` toggle in the top-right chrome; Studio stores
+  the choice in `localStorage` under `cobrust-studio-locale`.
+- English docs: `docs/human/en/` (this directory)
+- 中文文档: `docs/human/zh/`
 
 ## License
 

@@ -6,6 +6,23 @@ All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepac
 
 ### Added
 
+- **M10 zh/en UI toggle (ADR-0011 Phase 2)** — closes the user dogfood
+  feedback "没有中英文切换" by adding a custom Svelte 5 i18n store,
+  typed English/Chinese message catalogs, and a visible `[ EN | 中 ]`
+  toggle in both the app chrome and the first-run `/login` screen.
+  - `web/src/lib/i18n.ts` exports `Locale`, `MessageKey`, `locale`,
+    `setLocale()`, and derived `t` with simple named interpolation.
+    Locale choice persists in `localStorage['cobrust-studio-locale']`;
+    no external i18n framework or runtime locale fetch is introduced.
+  - `/login`, `/adr`, `/agent`, `/finding`, `/ledger`, the root loading
+    page, and the shared modal close label now render page chrome through
+    `$t(...)`; ADR/finding markdown bodies and provider/error codes remain
+    source data.
+  - Coverage: `src/lib/i18n.test.ts` adds 3 Vitest tests for default
+    English, zh persistence, and interpolation. `tests/e2e/i18n.spec.ts`
+    adds 2 client-only Playwright specs for the toggle and reload
+    persistence. Frontend unit coverage is now 35 tests.
+
 - **M9 `task_tag` dispatch metadata (ADR-0010 Phase 2)** —
   closes ADR-0006 §F-03 and the README design-partner friction item
   for ledger cost analysis by task type.

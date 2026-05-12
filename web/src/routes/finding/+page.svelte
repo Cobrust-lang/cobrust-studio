@@ -17,6 +17,7 @@
 	import Button from '$lib/components/Button.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import { ApiError, createFinding, listFindings, subscribeEvents } from '$lib/api';
+	import { t } from '$lib/i18n';
 	import type { FindingSummary } from '$lib/types';
 	import { cn, findingStatusClass, severityClass } from '$lib/util';
 
@@ -76,7 +77,7 @@
 		e.preventDefault();
 		createErr = null;
 		if (!formId.trim() || !formTitle.trim()) {
-			createErr = 'finding_id and title are required';
+			createErr = $t('finding.errRequired');
 			return;
 		}
 		const splitList = (s: string) =>
@@ -123,17 +124,17 @@
 
 <header class="mb-5 flex items-end justify-between gap-4">
 	<div>
-		<h1 class="text-lg font-semibold">Findings</h1>
+		<h1 class="text-lg font-semibold">{$t('finding.title')}</h1>
 		<p class="text-xs text-muted-foreground">
-			Failure-capture log — severity P0..P3, status open / closed_by_*. {rows.length} entries.
+			{$t('finding.subtitle', { count: rows.length })}
 		</p>
 	</div>
-	<Button onclick={openCreate}>+ New finding</Button>
+	<Button onclick={openCreate}>{$t('finding.new')}</Button>
 </header>
 
 {#if loadErr}
 	<div class="mb-3 rounded-md bg-[hsl(var(--err)/0.12)] px-3 py-2 text-sm text-[hsl(var(--err))]">
-		Failed to load: {loadErr}
+		{$t('common.failedToLoad', { error: loadErr })}
 	</div>
 {/if}
 
@@ -141,19 +142,24 @@
 	<table class="w-full text-sm">
 		<thead class="bg-secondary/40 text-xs uppercase tracking-wide text-muted-foreground">
 			<tr>
-				<th class="px-3 py-2 text-left">ID</th>
-				<th class="px-3 py-2 text-left">Title</th>
-				<th class="px-3 py-2 text-left w-20">Severity</th>
-				<th class="px-3 py-2 text-left w-32">Status</th>
-				<th class="px-3 py-2 text-left">Verified commit</th>
+				<th class="px-3 py-2 text-left">{$t('common.id')}</th>
+				<th class="px-3 py-2 text-left">{$t('common.title')}</th>
+				<th class="px-3 py-2 text-left w-20">{$t('finding.severity')}</th>
+				<th class="px-3 py-2 text-left w-32">{$t('common.status')}</th>
+				<th class="px-3 py-2 text-left">{$t('finding.verifiedCommit')}</th>
 			</tr>
 		</thead>
 		<tbody>
 			{#if loading}
-				<tr><td colspan="5" class="px-3 py-6 text-center text-muted-foreground">Loading…</td></tr>
+				<tr
+					><td colspan="5" class="px-3 py-6 text-center text-muted-foreground"
+						>{$t('common.loading')}</td
+					></tr
+				>
 			{:else if rows.length === 0}
 				<tr
-					><td colspan="5" class="px-3 py-6 text-center text-muted-foreground">No findings yet.</td
+					><td colspan="5" class="px-3 py-6 text-center text-muted-foreground"
+						>{$t('finding.noRows')}</td
 					></tr
 				>
 			{/if}
@@ -177,8 +183,11 @@
 	</table>
 </div>
 
-<!-- Detail dialog -->
-<Modal bind:open={detailOpen} title={detailRow ? detailRow.finding_id : 'Finding'} width="md">
+<Modal
+	bind:open={detailOpen}
+	title={detailRow ? detailRow.finding_id : $t('finding.detail')}
+	width="md"
+>
 	{#if detailRow}
 		<div class="flex flex-col gap-3 text-sm">
 			<div class="flex flex-wrap items-center gap-2 text-xs">
@@ -193,19 +202,17 @@
 				{detailRow.path}
 			</p>
 			<p class="text-xs text-muted-foreground">
-				Body view requires a singleton <code>/api/finding/:id</code> route — planned for M2+. Open the
-				file on disk to inspect the full markdown.
+				{$t('finding.bodyUnavailable')}
 			</p>
 		</div>
 	{/if}
 </Modal>
 
-<!-- Create dialog -->
-<Modal bind:open={createOpen} title="New finding" width="md">
+<Modal bind:open={createOpen} title={$t('finding.newTitle')} width="md">
 	<form onsubmit={submitCreate} class="flex flex-col gap-3">
 		<div class="grid grid-cols-2 gap-3">
 			<label class="flex flex-col gap-1 text-sm">
-				<span class="text-xs text-muted-foreground">finding_id</span>
+				<span class="text-xs text-muted-foreground">{$t('finding.findingId')}</span>
 				<input
 					type="text"
 					bind:value={formId}
@@ -215,7 +222,7 @@
 				/>
 			</label>
 			<label class="flex flex-col gap-1 text-sm">
-				<span class="text-xs text-muted-foreground">Severity</span>
+				<span class="text-xs text-muted-foreground">{$t('finding.severity')}</span>
 				<select
 					bind:value={formSeverity}
 					class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none"
@@ -228,7 +235,7 @@
 			</label>
 		</div>
 		<label class="flex flex-col gap-1 text-sm">
-			<span class="text-xs text-muted-foreground">Title</span>
+			<span class="text-xs text-muted-foreground">{$t('common.title')}</span>
 			<input
 				type="text"
 				bind:value={formTitle}
@@ -238,7 +245,7 @@
 		</label>
 		<div class="grid grid-cols-2 gap-3">
 			<label class="flex flex-col gap-1 text-sm">
-				<span class="text-xs text-muted-foreground">Status</span>
+				<span class="text-xs text-muted-foreground">{$t('common.status')}</span>
 				<select
 					bind:value={formStatus}
 					class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none"
@@ -250,7 +257,7 @@
 				</select>
 			</label>
 			<label class="flex flex-col gap-1 text-sm">
-				<span class="text-xs text-muted-foreground">last_verified_commit</span>
+				<span class="text-xs text-muted-foreground">{$t('finding.lastVerifiedCommit')}</span>
 				<input
 					type="text"
 					bind:value={formVerified}
@@ -259,16 +266,16 @@
 			</label>
 		</div>
 		<label class="flex flex-col gap-1 text-sm">
-			<span class="text-xs text-muted-foreground">Dependencies (comma-separated)</span>
+			<span class="text-xs text-muted-foreground">{$t('finding.dependencies')}</span>
 			<input
 				type="text"
 				bind:value={formDeps}
-				placeholder="adr:0006, finding:a1-1-strip"
+				placeholder={$t('finding.dependenciesPlaceholder')}
 				class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none font-mono"
 			/>
 		</label>
 		<label class="flex flex-col gap-1 text-sm">
-			<span class="text-xs text-muted-foreground">Related (comma-separated)</span>
+			<span class="text-xs text-muted-foreground">{$t('finding.related')}</span>
 			<input
 				type="text"
 				bind:value={formRelated}
@@ -276,7 +283,7 @@
 			/>
 		</label>
 		<label class="flex flex-col gap-1 text-sm">
-			<span class="text-xs text-muted-foreground">Body (markdown)</span>
+			<span class="text-xs text-muted-foreground">{$t('finding.bodyMarkdown')}</span>
 			<textarea
 				bind:value={formBody}
 				rows="6"
@@ -289,9 +296,11 @@
 			</div>
 		{/if}
 		<div class={cn('flex justify-end gap-2 pt-1')}>
-			<Button type="button" variant="ghost" onclick={() => (createOpen = false)}>Cancel</Button>
+			<Button type="button" variant="ghost" onclick={() => (createOpen = false)}
+				>{$t('common.cancel')}</Button
+			>
 			<Button type="submit" disabled={createBusy}>
-				{createBusy ? 'Creating…' : 'Create finding'}
+				{createBusy ? $t('finding.creating') : $t('finding.create')}
 			</Button>
 		</div>
 	</form>

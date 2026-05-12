@@ -10,6 +10,7 @@
 	import { onDestroy } from 'svelte';
 	import { dispatchSse, ApiError } from '$lib/api';
 	import Button from '$lib/components/Button.svelte';
+	import { t } from '$lib/i18n';
 	import { cn } from '$lib/util';
 
 	let model = $state('claude-opus-4-7');
@@ -40,7 +41,7 @@
 		err = null;
 		routerMissing = false;
 		if (!prompt.trim()) {
-			err = { code: 'invalid_body', message: 'prompt is required' };
+			err = { code: 'invalid_body', message: $t('agent.errPromptRequired') };
 			return;
 		}
 		streaming = true;
@@ -64,8 +65,6 @@
 					transcript += evt.delta;
 				} else if (evt.kind === 'done') {
 					done = evt.payload;
-					// If the server omitted any chunks (e.g. very short text), still
-					// display the full response from the done payload.
 					if (transcript === '' && evt.payload.text) transcript = evt.payload.text;
 				} else if (evt.kind === 'error') {
 					err = { code: evt.payload.code, message: evt.payload.error };
@@ -88,30 +87,24 @@
 		abortCtrl?.abort();
 	}
 
-	// F-M2-04: abort any in-flight dispatch when the user navigates
-	// away from /agent. Without this, the fetch + ReadableStream
-	// generator continue running in the background until the response
-	// ends, wasting upstream tokens.
 	onDestroy(() => {
 		abortCtrl?.abort();
 	});
 </script>
 
 <header class="mb-5">
-	<h1 class="text-lg font-semibold">Agent</h1>
+	<h1 class="text-lg font-semibold">{$t('agent.title')}</h1>
 	<p class="text-xs text-muted-foreground">
-		One-shot dispatch via the configured LLM router. Streaming response — chunks land as they
-		arrive.
+		{$t('agent.subtitle')}
 	</p>
 </header>
 
 <div class="grid gap-5 lg:grid-cols-2">
-	<!-- Composer -->
 	<form onsubmit={start} class="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
-		<h2 class="text-sm font-semibold">Prompt</h2>
+		<h2 class="text-sm font-semibold">{$t('agent.prompt')}</h2>
 
 		<label class="flex flex-col gap-1 text-sm">
-			<span class="text-xs text-muted-foreground">System</span>
+			<span class="text-xs text-muted-foreground">{$t('agent.system')}</span>
 			<textarea
 				bind:value={systemPrompt}
 				rows="2"
@@ -120,7 +113,7 @@
 		</label>
 
 		<label class="flex flex-col gap-1 text-sm">
-			<span class="text-xs text-muted-foreground">User</span>
+			<span class="text-xs text-muted-foreground">{$t('agent.user')}</span>
 			<textarea
 				bind:value={prompt}
 				rows="6"
@@ -130,7 +123,7 @@
 
 		<div class="grid grid-cols-2 gap-3">
 			<label class="flex flex-col gap-1 text-sm">
-				<span class="text-xs text-muted-foreground">Model</span>
+				<span class="text-xs text-muted-foreground">{$t('common.model')}</span>
 				<input
 					type="text"
 					bind:value={model}
@@ -138,7 +131,7 @@
 				/>
 			</label>
 			<label class="flex flex-col gap-1 text-sm">
-				<span class="text-xs text-muted-foreground">Task tag</span>
+				<span class="text-xs text-muted-foreground">{$t('agent.taskTag')}</span>
 				<input
 					type="text"
 					bind:value={taskTag}
@@ -148,7 +141,9 @@
 		</div>
 
 		<label class="flex flex-col gap-1 text-sm">
-			<span class="text-xs text-muted-foreground">Temperature: {temperature.toFixed(2)}</span>
+			<span class="text-xs text-muted-foreground"
+				>{$t('agent.temperature', { value: temperature.toFixed(2) })}</span
+			>
 			<input
 				type="range"
 				min="0"
@@ -161,31 +156,33 @@
 
 		<div class="flex gap-2 pt-1">
 			<Button type="submit" disabled={streaming}>
-				{streaming ? 'Streaming…' : 'Dispatch'}
+				{streaming ? $t('agent.streaming') : $t('agent.dispatch')}
 			</Button>
 			{#if streaming}
-				<Button type="button" variant="ghost" onclick={cancel}>Cancel</Button>
+				<Button type="button" variant="ghost" onclick={cancel}>{$t('common.cancel')}</Button>
 			{/if}
 		</div>
 	</form>
 
-	<!-- Output -->
 	<div class="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 min-h-[24rem]">
 		<div class="flex items-center justify-between">
-			<h2 class="text-sm font-semibold">Output</h2>
+			<h2 class="text-sm font-semibold">{$t('agent.output')}</h2>
 			{#if done}
 				<div class="flex items-center gap-2 text-[0.7rem] text-muted-foreground">
 					<span class="font-mono">{done.provider}/{done.model}</span>
 					<span class="font-mono">
-						tokens: {done.usage.prompt_tokens}+{done.usage.completion_tokens}
+						{$t('agent.tokens', {
+							prompt: done.usage.prompt_tokens,
+							completion: done.usage.completion_tokens
+						})}
 					</span>
 					{#if done.cache_hit}
 						<span class="rounded-full bg-[hsl(var(--ok)/0.18)] px-2 py-0.5 text-[hsl(var(--ok))]"
-							>cache hit</span
+							>{$t('agent.cacheHit')}</span
 						>
 					{/if}
 					{#if done.task_tag}
-						<span class="font-mono">tag: {done.task_tag}</span>
+						<span class="font-mono">{$t('agent.tag', { tag: done.task_tag })}</span>
 					{/if}
 				</div>
 			{/if}
@@ -193,7 +190,8 @@
 
 		{#if routerMissing}
 			<div class="rounded-md bg-[hsl(var(--warn)/0.12)] px-3 py-2 text-sm text-[hsl(var(--warn))]">
-				LLM router not configured. <a href="/login" class="underline">Configure endpoint →</a>
+				{$t('agent.routerMissing')}
+				<a href="/login" class="underline">{$t('agent.configureEndpoint')}</a>
 			</div>
 		{:else if err}
 			<div class="rounded-md bg-[hsl(var(--err)/0.12)] px-3 py-2 text-sm text-[hsl(var(--err))]">
@@ -206,6 +204,7 @@
 			class={cn(
 				'flex-1 whitespace-pre-wrap break-words rounded-md bg-secondary/30 p-3 font-mono text-xs leading-relaxed',
 				transcript === '' && 'text-muted-foreground/60'
-			)}>{transcript || (streaming ? 'Awaiting first chunk…' : 'Dispatch to populate.')}</pre>
+			)}>{transcript ||
+				(streaming ? $t('agent.awaitingFirstChunk') : $t('agent.dispatchToPopulate'))}</pre>
 	</div>
 </div>

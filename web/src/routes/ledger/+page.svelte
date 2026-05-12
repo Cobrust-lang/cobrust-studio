@@ -9,6 +9,7 @@
 	import { ApiError, recentLedger } from '$lib/api';
 	import Button from '$lib/components/Button.svelte';
 	import Badge from '$lib/components/Badge.svelte';
+	import { t } from '$lib/i18n';
 	import type { LedgerEntry } from '$lib/types';
 	import { cn, fmtTs } from '$lib/util';
 
@@ -47,15 +48,14 @@
 
 <header class="mb-5 flex items-end justify-between gap-4">
 	<div>
-		<h1 class="text-lg font-semibold">Ledger</h1>
+		<h1 class="text-lg font-semibold">{$t('ledger.title')}</h1>
 		<p class="text-xs text-muted-foreground">
-			Dispatch records — newest first. SQLite materialised view (ADR-0006 §F-02). {entries.length} rows
-			shown.
+			{$t('ledger.subtitle', { count: entries.length })}
 		</p>
 	</div>
 	<div class="flex items-end gap-2">
 		<label class="flex flex-col gap-1 text-xs">
-			<span class="text-muted-foreground">Show last</span>
+			<span class="text-muted-foreground">{$t('ledger.showLast')}</span>
 			<input
 				type="number"
 				min="1"
@@ -64,13 +64,13 @@
 				class="w-24 rounded-md border border-input bg-background px-2 py-1 text-sm font-mono focus:border-ring focus:outline-none"
 			/>
 		</label>
-		<Button onclick={refresh}>Refresh</Button>
+		<Button onclick={refresh}>{$t('common.refresh')}</Button>
 	</div>
 </header>
 
 {#if err}
 	<div class="mb-3 rounded-md bg-[hsl(var(--err)/0.12)] px-3 py-2 text-sm text-[hsl(var(--err))]">
-		Failed to load: {err}
+		{$t('common.failedToLoad', { error: err })}
 	</div>
 {/if}
 
@@ -78,22 +78,27 @@
 	<table class="w-full text-xs">
 		<thead class="bg-secondary/40 uppercase tracking-wide text-muted-foreground">
 			<tr>
-				<th class="px-3 py-2 text-left">Timestamp (UTC)</th>
-				<th class="px-3 py-2 text-left">Provider</th>
-				<th class="px-3 py-2 text-left">Model</th>
-				<th class="px-3 py-2 text-left">Task</th>
-				<th class="px-3 py-2 text-right">Cache</th>
-				<th class="px-3 py-2 text-right">Tokens (in/out/total)</th>
-				<th class="px-3 py-2 text-right">Latency</th>
-				<th class="px-3 py-2 text-left">Outcome</th>
+				<th class="px-3 py-2 text-left">{$t('ledger.timestamp')}</th>
+				<th class="px-3 py-2 text-left">{$t('common.provider')}</th>
+				<th class="px-3 py-2 text-left">{$t('common.model')}</th>
+				<th class="px-3 py-2 text-left">{$t('ledger.task')}</th>
+				<th class="px-3 py-2 text-right">{$t('ledger.cache')}</th>
+				<th class="px-3 py-2 text-right">{$t('ledger.tokens')}</th>
+				<th class="px-3 py-2 text-right">{$t('ledger.latency')}</th>
+				<th class="px-3 py-2 text-left">{$t('ledger.outcome')}</th>
 			</tr>
 		</thead>
 		<tbody>
 			{#if loading}
-				<tr><td colspan="8" class="px-3 py-6 text-center text-muted-foreground">Loading…</td></tr>
+				<tr
+					><td colspan="8" class="px-3 py-6 text-center text-muted-foreground"
+						>{$t('common.loading')}</td
+					></tr
+				>
 			{:else if entries.length === 0}
 				<tr
-					><td colspan="8" class="px-3 py-6 text-center text-muted-foreground">No entries yet.</td
+					><td colspan="8" class="px-3 py-6 text-center text-muted-foreground"
+						>{$t('ledger.noRows')}</td
 					></tr
 				>
 			{/if}
@@ -110,9 +115,9 @@
 					<td class="px-3 py-2 font-mono text-muted-foreground">{e.task_tag ?? '—'}</td>
 					<td class="px-3 py-2 text-right">
 						{#if e.cache_hit}
-							<span class="text-[hsl(var(--ok))]">HIT</span>
+							<span class="text-[hsl(var(--ok))]">{$t('ledger.hit')}</span>
 						{:else}
-							<span class="text-muted-foreground">miss</span>
+							<span class="text-muted-foreground">{$t('ledger.miss')}</span>
 						{/if}
 					</td>
 					<td

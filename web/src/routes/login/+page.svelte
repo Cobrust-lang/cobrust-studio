@@ -20,6 +20,8 @@
 	import { goto } from '$app/navigation';
 	import Button from '$lib/components/Button.svelte';
 	import { login, getVersion, ApiError } from '$lib/api';
+	import { locale, setLocale, t } from '$lib/i18n';
+	import type { Locale } from '$lib/i18n';
 	import { cn } from '$lib/util';
 
 	let tab = $state<'api' | 'oauth'>('api');
@@ -31,9 +33,6 @@
 	let submitting = $state(false);
 	let toast = $state<{ kind: 'ok' | 'err'; msg: string } | null>(null);
 
-	// Mei v3 P2: footer used to hardcode "v0.1.0" which drifted with every
-	// release. Fetch from /api/version on mount so the footer always
-	// matches the binary the user is talking to.
 	let version = $state<string>('…');
 	onMount(async () => {
 		try {
@@ -44,8 +43,6 @@
 		}
 	});
 
-	// M7 (ADR-0008): URL-based auto-suggest for provider kind.
-	// Reactive: typing the URL updates the dropdown, but the user can override.
 	$effect(() => {
 		if (baseUrl.includes('anthropic.com')) {
 			providerKind = 'anthropic';
@@ -54,15 +51,19 @@
 		}
 	});
 
+	function chooseLocale(next: Locale) {
+		setLocale(next);
+	}
+
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
 		toast = null;
 		if (!baseUrl.trim() || !apiKey.trim() || !model.trim() || !passphrase) {
-			toast = { kind: 'err', msg: 'all fields required (including passphrase)' };
+			toast = { kind: 'err', msg: $t('login.errAllFields') };
 			return;
 		}
 		if (passphrase.length < 8) {
-			toast = { kind: 'err', msg: 'passphrase must be ≥ 8 characters' };
+			toast = { kind: 'err', msg: $t('login.errPassphraseShort') };
 			return;
 		}
 		submitting = true;
@@ -74,7 +75,7 @@
 				passphrase,
 				provider_kind: providerKind
 			});
-			toast = { kind: 'ok', msg: 'session unlocked — redirecting…' };
+			toast = { kind: 'ok', msg: $t('login.okUnlocked') };
 			setTimeout(() => goto('/adr'), 400);
 		} catch (e) {
 			const msg = e instanceof ApiError ? `${e.code}: ${e.message}` : String(e);
@@ -85,7 +86,29 @@
 	}
 </script>
 
-<div class="grid min-h-screen place-items-center px-4">
+<div class="relative grid min-h-screen place-items-center px-4">
+	<div class="absolute right-4 top-4 flex rounded-md bg-secondary p-0.5 text-xs">
+		<button
+			type="button"
+			onclick={() => chooseLocale('en')}
+			class={cn(
+				'rounded px-1.5 py-0.5 text-[0.65rem] font-medium',
+				$locale === 'en' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'
+			)}
+		>
+			EN
+		</button>
+		<button
+			type="button"
+			onclick={() => chooseLocale('zh')}
+			class={cn(
+				'rounded px-1.5 py-0.5 text-[0.65rem] font-medium',
+				$locale === 'zh' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'
+			)}
+		>
+			中
+		</button>
+	</div>
 	<div class="w-full max-w-md">
 		<div class="mb-6 text-center">
 			<div
@@ -95,7 +118,7 @@
 			</div>
 			<h1 class="text-xl font-semibold">Cobrust Studio</h1>
 			<p class="mt-1 text-xs text-muted-foreground">
-				Configure your LLM endpoint to start dispatching agents.
+				{$t('login.subtitle')}
 			</p>
 		</div>
 
@@ -109,22 +132,22 @@
 						tab === 'api' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'
 					)}
 				>
-					API key
+					{$t('login.apiKeyTab')}
 				</button>
 				<button
 					type="button"
 					disabled
 					class="flex-1 rounded px-2 py-1.5 text-muted-foreground/60 cursor-not-allowed"
-					title="OAuth lands in v0.5.0"
+					title={$t('login.oauthTitle')}
 				>
-					OAuth <span class="ml-1 text-[0.65rem] opacity-70">(v0.5.0)</span>
+					{$t('login.oauthTab')} <span class="ml-1 text-[0.65rem] opacity-70">(v0.5.0)</span>
 				</button>
 			</div>
 
 			{#if tab === 'api'}
 				<form onsubmit={submit} class="flex flex-col gap-3">
 					<label class="flex flex-col gap-1 text-sm">
-						<span class="text-xs text-muted-foreground">Base URL</span>
+						<span class="text-xs text-muted-foreground">{$t('login.baseUrl')}</span>
 						<input
 							type="text"
 							bind:value={baseUrl}
@@ -133,15 +156,11 @@
 							class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none"
 						/>
 						<span class="text-[0.65rem] text-muted-foreground/80 leading-snug">
-							Examples — Anthropic: <code class="font-mono">https://api.anthropic.com</code>
-							(no <code>/v1</code>) · OpenAI: <code class="font-mono">https://api.openai.com/v1</code>
-							· local vLLM/Ollama: <code class="font-mono">http://127.0.0.1:8000/v1</code>.
-							Studio appends the provider-specific suffix (Anthropic <code>/v1/messages</code>,
-							OpenAI <code>/chat/completions</code>) automatically.
+							{$t('login.baseUrlHelp')}
 						</span>
 					</label>
 					<label class="flex flex-col gap-1 text-sm">
-						<span class="text-xs text-muted-foreground">API key</span>
+						<span class="text-xs text-muted-foreground">{$t('login.apiKey')}</span>
 						<input
 							type="password"
 							bind:value={apiKey}
@@ -151,7 +170,7 @@
 						/>
 					</label>
 					<label class="flex flex-col gap-1 text-sm">
-						<span class="text-xs text-muted-foreground">Model</span>
+						<span class="text-xs text-muted-foreground">{$t('common.model')}</span>
 						<input
 							type="text"
 							bind:value={model}
@@ -161,36 +180,32 @@
 						/>
 					</label>
 					<label class="flex flex-col gap-1 text-sm">
-						<span class="text-xs text-muted-foreground">Provider</span>
+						<span class="text-xs text-muted-foreground">{$t('common.provider')}</span>
 						<select
 							bind:value={providerKind}
 							class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none"
 						>
 							<option value="anthropic">Anthropic API</option>
 							<option value="openai"
-								>OpenAI-compatible (vLLM / DeepSeek / Together / OpenRouter / Groq /
-								Ollama)</option
+								>OpenAI-compatible (vLLM / DeepSeek / Together / OpenRouter / Groq / Ollama)</option
 							>
 						</select>
 					</label>
 					<label class="flex flex-col gap-1 text-sm">
-						<span class="text-xs text-muted-foreground">Passphrase (≥ 8 chars)</span>
+						<span class="text-xs text-muted-foreground">{$t('login.passphrase')}</span>
 						<input
 							type="password"
 							bind:value={passphrase}
 							autocomplete="new-password"
-							placeholder="encrypts your API key at rest"
+							placeholder={$t('login.passphrasePlaceholder')}
 							class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none font-mono"
 						/>
 					</label>
 					<p class="text-[0.7rem] text-muted-foreground">
-						Server derives an Argon2id key from your passphrase, AES-256-GCM-seals
-						the credentials, and holds the in-memory session key for the binary's
-						lifetime (ADR-0007). On restart, re-enter the passphrase. The
-						plaintext travels over TLS / localhost; the server never persists it.
+						{$t('login.secretHelp')}
 					</p>
 					<Button type="submit" disabled={submitting} class="mt-1">
-						{submitting ? 'Unlocking…' : 'Unlock session'}
+						{submitting ? $t('login.unlocking') : $t('login.unlockSession')}
 					</Button>
 					{#if toast}
 						<div
@@ -208,7 +223,7 @@
 			{/if}
 		</div>
 		<p class="mt-3 text-center text-[0.7rem] text-muted-foreground">
-			Studio is a single-binary, single-project, single-user MVP. v{version}.
+			{$t('login.footer', { version })}
 		</p>
 	</div>
 </div>

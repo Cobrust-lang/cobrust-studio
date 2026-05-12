@@ -202,8 +202,8 @@ export type EventEnvelope =
 	| { kind: 'finding_added'; path: string }
 	| { kind: 'finding_modified'; path: string }
 	| { kind: 'finding_removed'; path: string };
-	// Note: per A5.1 守闸 (F-A4-02 reconcile) + M3.1 (F-M2-05), no
-	// `heartbeat` typed event. SSE liveness is via `KeepAlive` comment
-	// frames the browser silently drops. If a future variant is needed
-	// (some proxies strip comments), add it here AND wire an actual
-	// publisher in studio-server.
+// Note: per A5.1 守闸 (F-A4-02 reconcile) + M3.1 (F-M2-05), no
+// `heartbeat` typed event. SSE liveness is via `KeepAlive` comment
+// frames the browser silently drops. If a future variant is needed
+// (some proxies strip comments), add it here AND wire an actual
+// publisher in studio-server.

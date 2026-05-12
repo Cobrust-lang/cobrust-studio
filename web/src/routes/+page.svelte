@@ -5,6 +5,7 @@
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { t } from '$lib/i18n';
 	import { onMount } from 'svelte';
 
 	onMount(() => {
@@ -12,4 +13,6 @@
 	});
 </script>
 
-<div class="grid min-h-[60vh] place-items-center text-sm text-muted-foreground">Loading…</div>
+<div class="grid min-h-[60vh] place-items-center text-sm text-muted-foreground">
+	{$t('common.loading')}
+</div>

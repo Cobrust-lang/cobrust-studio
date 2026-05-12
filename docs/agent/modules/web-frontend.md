@@ -2,7 +2,7 @@
 doc_kind: module
 module_id: web-frontend
 last_verified_commit: eff54b4
-dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0013]
+dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0011, adr:0013]
 ---
 
 # Module: web-frontend
@@ -104,6 +104,13 @@ init` and migrate.
   carrying `project: ProjectCurrent | null` and `version: VersionInfo |
   null`, hydrated by `+layout.ts` on mount.
 
+- **`i18n.ts` + `i18n/{en,zh}.ts`** — ADR-0011 client-side zh/en
+  message catalog. `locale` stores `'en' | 'zh'`, `setLocale()` persists
+  to `localStorage['cobrust-studio-locale']`, and derived `t` formats
+  typed message keys with simple named interpolation. No external i18n
+  framework or runtime locale fetch is used; all strings bundle into the
+  static SvelteKit build.
+
 - **`util.ts`** — `cn` (class merger), `fmtTs` (RFC-3339 → compact UTC),
   `adrStatusClass` / `severityClass` / `findingStatusClass` (HSL
   status-palette mappings).
@@ -118,10 +125,11 @@ init` and migrate.
   swallowed (the navbar renders a "server unreachable" red dot
   instead) so a not-yet-up server doesn't block the SPA render.
 - `+layout.svelte` — navbar (logo, page links, project-root preview,
-  server version, reachable status dot, theme toggle, endpoint link).
-  Theme is `.dark` class on `<html>` by default; toggling persists to
-  `localStorage` under `cs-theme`. Hidden on `/login` for full-screen
-  centred form.
+  server version, reachable status dot, `[ EN | 中 ]` language toggle,
+  theme toggle, endpoint link). Theme is `.dark` class on `<html>` by
+  default; toggling persists to `localStorage` under `cs-theme`.
+  Hidden on `/login` for full-screen centred form; the login page renders
+  its own language toggle so first-run users can switch before unlocking.
 
 ## Internal architecture
 
@@ -143,6 +151,10 @@ web/
     │   ├── store.svelte.ts         # runes singleton (project + version + routerConfigured)
     │   ├── types.ts                # TS mirrors of Rust serde shapes
     │   ├── util.ts                 # cn / fmtTs / status-class helpers
+    │   ├── i18n.ts                 # ADR-0011 locale store + typed translator
+    │   ├── i18n/
+    │   │   ├── en.ts               # English message catalog
+    │   │   └── zh.ts               # Chinese message catalog
     │   └── components/
     │       ├── Badge.svelte        # caller-class status pill
     │       ├── Button.svelte       # 4-variant 2-size primitive
@@ -202,6 +214,20 @@ choice. Tokens are HSL channels declared on `:root` (dark) and
 `.light` so the same `bg-card` / `text-foreground` classes resolve
 correctly under either theme.
 
+### i18n system (M10, ADR-0011)
+
+The frontend ships a custom Svelte-store i18n layer instead of a
+published framework. `$lib/i18n.ts` exports `Locale`, `MessageKey`,
+`locale`, `setLocale()`, and derived `t`. English is the default; Chinese
+is opt-in through the visible `[ EN | 中 ]` toggle. The choice persists in
+`localStorage['cobrust-studio-locale']` and survives reloads in both the
+Tauri WebView and headless/server browser mode.
+
+Initial M10 coverage is page chrome for `/login`, `/adr`, `/agent`,
+`/finding`, `/ledger`, root redirect loading text, and the modal close
+label. API error codes and ADR/finding markdown bodies remain source data
+rather than UI chrome.
+
 ## Gates (Wave M2)
 
 Run from `web/`:
@@ -236,10 +262,11 @@ Lives next to the module under test in `src/lib/`:
 ```
 src/lib/api.test.ts      # 20 tests — fetch wrapper + SSE consumer
 src/lib/crypto.test.ts   # 8 tests — encryptEndpointBlob round-trip
+src/lib/i18n.test.ts     # 3 tests — locale switch + persistence + interpolation
 src/lib/types.test.ts    # 4 tests — compile-time wire-shape pins
 ```
 
-Total: 32 tests, runs in ~1s. Vitest `^3` + jsdom `^29` — pinned to
+Total: 35 tests after M10, runs in ~1s. Vitest `^3` + jsdom `^29` — pinned to
 v3 because v4 requires Vite 6 and the M2 frontend is on Vite 5.4.
 The setup file at `src/test-setup.ts` supplements Node's `webcrypto`
 if jsdom ever regresses `crypto.subtle`.
@@ -272,7 +299,8 @@ tests/e2e/_setup.ts             # globalSetup — tempdir + spawn (hermetic)
 tests/e2e/_teardown.ts          # globalTeardown — kill + rmdir
 tests/e2e/_setup-dogfood.ts     # globalSetup — repo-root spawn (dogfood)
 tests/e2e/_teardown-dogfood.ts  # globalTeardown — kill (no tempdir)
-tests/e2e/login.spec.ts         # 3 tests — endpoint config flow
+tests/e2e/login.spec.ts         # 5 tests — endpoint config flow + provider hint
+tests/e2e/i18n.spec.ts          # 2 tests — client-only zh/en toggle + reload persistence
 tests/e2e/adr.spec.ts           # 3 tests — list / create / detail
 tests/e2e/agent.spec.ts         # 2 tests — dispatch SSE (router-None + Some)
 tests/e2e/finding.spec.ts       # 3 tests — list / create / summary detail
@@ -280,7 +308,7 @@ tests/e2e/ledger.spec.ts        # 3 tests — list / n-query / refresh
 tests/e2e/dogfood.spec.ts       # 2 tests — M3 done-means constitutional ADRs
 ```
 
-Total: 14 hermetic specs + 2 dogfood specs. **Wave M3 unflagged the
+Total: 14 hermetic specs + 2 client-only i18n specs + 2 dogfood specs after M10. **Wave M3 unflagged the
 M2 SKIPPED gate** — `pnpm run test:e2e` now spawns the release binary
 automatically (see `_setup.ts`) and runs the suite end-to-end. The
 SKIPPED-with-reason path is reserved for the *binary-missing* fallback
@@ -338,6 +366,7 @@ bash scripts/build-release.sh     # M3 DEV — produces target/release/cobrust-s
 cd web
 pnpm install
 pnpm run test:e2e                  # 14 hermetic specs
+pnpm run test:e2e:i18n             # 2 client-only i18n specs against current Svelte checkout
 pnpm run test:e2e:dogfood          # 2 dogfood specs (constitutional ADRs)
 ```
 
