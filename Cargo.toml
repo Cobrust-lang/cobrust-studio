@@ -5,6 +5,7 @@ members = [
     "crates/studio-store",
     "crates/studio-router",
 ]
+exclude = ["src-tauri"]
 
 [workspace.package]
 version = "0.3.0"

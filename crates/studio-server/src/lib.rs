@@ -37,8 +37,11 @@ pub mod synthetic;
 use std::net::SocketAddr;
 
 use futures::StreamExt;
+use rand_core::{OsRng, RngCore};
 use studio_store::{AdrChangeEvent, FindingChangeEvent, Store};
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
 
 pub use crate::app::build_router;
 pub use crate::cli::{Cli, Command, ServeArgs};
@@ -75,128 +78,71 @@ pub enum ServerError {
     /// front-end).
     #[error("persist config: {0}")]
     Persist(#[from] persist::PersistError),
+    /// Embedded server task exited unexpectedly before shutdown was requested.
+    #[error("embedded server task exited: {0}")]
+    EmbeddedTask(String),
+}
+
+/// Running embedded Studio server for desktop shells and integration tests.
+pub struct EmbeddedServer {
+    base_url: String,
+    bound: SocketAddr,
+    shutdown: Option<oneshot::Sender<()>>,
+    task: Option<JoinHandle<Result<(), std::io::Error>>>,
+}
+
+impl EmbeddedServer {
+    /// Base URL clients should load, including the trailing slash.
+    #[must_use]
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// Actual loopback address chosen by the OS.
+    #[must_use]
+    pub const fn bound_addr(&self) -> SocketAddr {
+        self.bound
+    }
+
+    /// Stop the embedded listener and wait for the serve task to exit.
+    ///
+    /// # Errors
+    /// Returns [`ServerError::EmbeddedTask`] if the spawned task panicked,
+    /// was cancelled, or `axum::serve` returned an I/O error.
+    pub async fn shutdown(mut self) -> Result<(), ServerError> {
+        if let Some(sender) = self.shutdown.take() {
+            let _ = sender.send(());
+        }
+        let Some(task) = self.task.take() else {
+            return Ok(());
+        };
+        match task.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(ServerError::Io(e)),
+            Err(e) => Err(ServerError::EmbeddedTask(e.to_string())),
+        }
+    }
+}
+
+impl Drop for EmbeddedServer {
+    fn drop(&mut self) {
+        if let Some(sender) = self.shutdown.take() {
+            let _ = sender.send(());
+        }
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
 }
 
 /// Run the server end-to-end: open the store, build the app, bind the
 /// listener, serve until shutdown signal.
 ///
-/// `host` and `port` mirror [`ServeArgs`]. Returns once the listener
-/// stops accepting connections (currently `axum::serve` runs until the
-/// process is signalled — graceful Ctrl-C handling lands with the SSE
-/// fan-out work in Wave A6+).
-///
-/// ## M6 `--dev-api-key` injection
-///
-/// When `args.dev_api_key` is `Some(key)`, the server constructs a
-/// synthetic [`crate::secret::SessionKey`] + [`crate::secret::EndpointSecret`]
-/// at boot and writes them to `AppState.session_key` and `session_kv`,
-/// bypassing the `/login` UI. This allows Playwright fixtures, CI tests,
-/// and headless scripts to authenticate without a browser interaction.
-///
 /// # Errors
 /// Bubbles up [`ServerError`] from store open, bind, or serve loop.
 pub async fn serve(args: &ServeArgs) -> Result<(), ServerError> {
-    let project_root = args.project.clone();
-    let store = Store::open(project_root.clone()).await?;
-    // Wave A5: try to construct the router from `<project_root>/studio.toml`.
-    // Soft-fail to `None` on any error (missing config, malformed TOML, no
-    // credentials, build failure). See ADR-0006 §"Addendum 2026-05-11" F-01
-    // for the binding contract, and `crate::router_init` for the resolution
-    // order. The `None` path keeps Wave-A4 503 behavior intact.
-    let router = router_init::try_build_router_from_project(&project_root, &store).await?;
-
-    // M8 (ADR-0009): build the persistent-session backend before constructing
-    // AppState so the boot-time auto-unlock path has the same Arc the login
-    // handler will later mirror into. `build_store` hard-errors if
-    // `mode=file` without `--persist-session-file` — boot fails fast so the
-    // operator sees a clear "missing file path" message instead of silently
-    // dropping the persistence option.
-    let persist_arc: std::sync::Arc<dyn persist::PersistStore + Send + Sync> =
-        persist::build_store(args.persist_session, args.persist_session_file.clone())?.into();
-
-    let mut state = AppState::with_persist(store, router, project_root.clone(), persist_arc);
-
-    // M6: Apply --debug-session flag.
-    state.debug_session = args.debug_session;
-
-    // M8 (ADR-0009): auto-unlock — if a persist backend has a passphrase,
-    // re-derive the SessionKey now so the next request doesn't need to
-    // visit /login. The path is best-effort: failures here (keychain
-    // denied, salt missing, derive error, open() mismatch) log a warning
-    // and fall through to the v0.3.0 baseline (user re-enters passphrase
-    // via /login).
-    //
-    // Deep-source-read discipline: the re-derive needs the salt from
-    // `session_kv.ciphertext[..16]` — same as the wrong-passphrase
-    // guard in login.rs. Verify the derived key actually opens the
-    // blob before stashing it; this catches the "passphrase rotated
-    // externally" hazard (operator deleted the blob via sqlite3 + re-
-    // logged in with a new passphrase, but the keychain still holds
-    // the OLD passphrase). M6 seal-salt-mismatch lesson lives here.
-    auto_unlock_on_boot(&state).await;
-
-    // M6: Apply --dev-api-key escape hatch (ADR-0007 §"Env-var path retention").
-    // M7 (ADR-0008): Use --dev-provider-kind to select the provider kind for
-    // the boot-time injection (defaults to Anthropic for v0.2.x back-compat).
-    if let Some(ref dev_key) = args.dev_api_key {
-        use rand_core::{OsRng, RngCore};
-        let mut salt = [0u8; 16];
-        OsRng.fill_bytes(&mut salt);
-
-        match secret::SessionKey::derive("dev-api-key-synthetic-passphrase", &salt) {
-            Ok(session_key) => {
-                let secret = secret::EndpointSecret {
-                    endpoint: args.dev_endpoint.clone(),
-                    api_key: dev_key.clone(),
-                    model: args.dev_model.clone(),
-                    provider_kind: args.dev_provider_kind,
-                };
-                match session_key.seal(&secret) {
-                    Ok(ciphertext) => {
-                        let blob = studio_store::session::EncryptedBlob {
-                            ciphertext,
-                            nonce: Vec::new(),
-                            scheme: secret::SCHEME.to_string(),
-                        };
-                        if let Err(e) = state.store.session().set_endpoint(blob).await {
-                            tracing::warn!(error = %e, "--dev-api-key: failed to persist blob; boot continues");
-                        }
-                        let mut guard = state.session_key.write().await;
-                        *guard = Some(session_key);
-                        drop(guard);
-                        tracing::info!(
-                            endpoint = %args.dev_endpoint,
-                            model = %args.dev_model,
-                            provider_kind = ?args.dev_provider_kind,
-                            "--dev-api-key: synthetic session key injected at boot",
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "--dev-api-key: seal failed; boot continues unauthenticated");
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "--dev-api-key: key derivation failed; boot continues unauthenticated");
-            }
-        }
-    }
-
-    // Wave A4 (A5 reconcile): the watcher → EventHub bridge is now spawned
-    // inside [`build_router`] so test harnesses that boot via
-    // `build_router(state)` directly (`tests/common/mod.rs::fresh_app`) also
-    // get a live bridge without having to duplicate the wiring. The
-    // previous explicit call here was redundant once `build_router` took
-    // ownership of the spawn.
-
-    let addr: SocketAddr =
-        format!("{}:{}", args.host, args.port)
-            .parse()
-            .map_err(|e: std::net::AddrParseError| {
-                std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
-            })?;
-    let listener = TcpListener::bind(addr).await?;
-    let bound = listener.local_addr()?;
+    let (project_root, state) = state_from_args(args).await?;
+    let (listener, bound) = bind_listener(&args.host, args.port).await?;
     tracing::info!(
         %bound,
         project = %project_root.display(),
@@ -210,6 +156,115 @@ pub async fn serve(args: &ServeArgs) -> Result<(), ServerError> {
     let app = build_router(state);
     axum::serve(listener, app.into_make_service()).await?;
     Ok(())
+}
+
+/// Start Studio on an ephemeral loopback listener for desktop shells.
+///
+/// # Errors
+/// Bubbles up [`ServerError`] from store open, bind, or task shutdown setup.
+pub async fn serve_embedded(args: &ServeArgs) -> Result<EmbeddedServer, ServerError> {
+    let (project_root, state) = state_from_args(args).await?;
+    let (listener, bound) = bind_listener(&args.host, args.port).await?;
+    if !bound.ip().is_loopback() {
+        return Err(ServerError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "embedded Studio server must bind to loopback",
+        )));
+    }
+
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let app = build_router(state);
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app.into_make_service())
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+    });
+    tracing::info!(
+        %bound,
+        project = %project_root.display(),
+        "embedded cobrust-studio serving on http://{bound}",
+    );
+
+    Ok(EmbeddedServer {
+        base_url: format!("http://{bound}/"),
+        bound,
+        shutdown: Some(shutdown_tx),
+        task: Some(task),
+    })
+}
+
+async fn state_from_args(args: &ServeArgs) -> Result<(std::path::PathBuf, AppState), ServerError> {
+    let project_root = args.project.clone();
+    let store = Store::open(project_root.clone()).await?;
+    let router = router_init::try_build_router_from_project(&project_root, &store).await?;
+    let persist_arc: std::sync::Arc<dyn persist::PersistStore + Send + Sync> =
+        persist::build_store(args.persist_session, args.persist_session_file.clone())?.into();
+    let mut state = AppState::with_persist(store, router, project_root.clone(), persist_arc);
+    state.debug_session = args.debug_session;
+    auto_unlock_on_boot(&state).await;
+    inject_dev_key(args, &state).await;
+    Ok((project_root, state))
+}
+
+async fn inject_dev_key(args: &ServeArgs, state: &AppState) {
+    let Some(ref dev_key) = args.dev_api_key else {
+        return;
+    };
+
+    let mut salt = [0u8; 16];
+    OsRng.fill_bytes(&mut salt);
+
+    match secret::SessionKey::derive("dev-api-key-synthetic-passphrase", &salt) {
+        Ok(session_key) => {
+            let secret = secret::EndpointSecret {
+                endpoint: args.dev_endpoint.clone(),
+                api_key: dev_key.clone(),
+                model: args.dev_model.clone(),
+                provider_kind: args.dev_provider_kind,
+            };
+            match session_key.seal(&secret) {
+                Ok(ciphertext) => {
+                    let blob = studio_store::session::EncryptedBlob {
+                        ciphertext,
+                        nonce: Vec::new(),
+                        scheme: secret::SCHEME.to_string(),
+                    };
+                    if let Err(e) = state.store.session().set_endpoint(blob).await {
+                        tracing::warn!(error = %e, "--dev-api-key: failed to persist blob; boot continues");
+                    }
+                    let mut guard = state.session_key.write().await;
+                    *guard = Some(session_key);
+                    drop(guard);
+                    tracing::info!(
+                        endpoint = %args.dev_endpoint,
+                        model = %args.dev_model,
+                        provider_kind = ?args.dev_provider_kind,
+                        "--dev-api-key: synthetic session key injected at boot",
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "--dev-api-key: seal failed; boot continues unauthenticated");
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "--dev-api-key: key derivation failed; boot continues unauthenticated");
+        }
+    }
+}
+
+async fn bind_listener(host: &str, port: u16) -> Result<(TcpListener, SocketAddr), ServerError> {
+    let addr: SocketAddr =
+        format!("{host}:{port}")
+            .parse()
+            .map_err(|e: std::net::AddrParseError| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
+            })?;
+    let listener = TcpListener::bind(addr).await?;
+    let bound = listener.local_addr()?;
+    Ok((listener, bound))
 }
 
 /// M8 (ADR-0009) auto-unlock — attempt to restore the in-memory

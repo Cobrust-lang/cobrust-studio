@@ -15,7 +15,9 @@
 		"test:unit:watch": "svelte-kit sync && vitest",
 		"test:e2e": "playwright test --project=hermetic",
 		"test:e2e:dogfood": "playwright test --config=playwright-dogfood.config.ts",
-		"test:e2e:setup": "playwright install --with-deps chromium"
+		"test:e2e:setup": "playwright install --with-deps chromium",
+		"tauri:dev": "pnpm build && cargo run --manifest-path ../src-tauri/Cargo.toml",
+		"tauri:build": "tauri build --config ../src-tauri/tauri.conf.json"
 	},
 	"devDependencies": {
 		"@playwright/test": "^1.60.0",
@@ -23,6 +25,7 @@
 		"@sveltejs/kit": "^2.8.1",
 		"@sveltejs/vite-plugin-svelte": "^4.0.0",
 		"@tailwindcss/vite": "^4.0.0",
+		"@tauri-apps/cli": "^2.0.0",
 		"@types/node": "^22.9.0",
 		"@vitest/ui": "^3.2.4",
 		"jsdom": "^29.1.1",

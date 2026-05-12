@@ -109,6 +109,26 @@ bash scripts/build-release.sh
 ./target/release/cobrust-studio serve --project . --port 7878
 ```
 
+### Desktop shell from source (v0.4.x / ADR-0013)
+
+The Tauri shell lives in `src-tauri/` and reuses the same SvelteKit build
+and Axum REST/SSE backend. It starts an embedded Studio server on
+`127.0.0.1:0`, then opens the WebView at the resolved loopback URL so
+existing relative `/api/*` calls keep working.
+
+```bash
+# Optional: pick the repo Studio should manage. Defaults to current dir.
+export COBRUST_STUDIO_PROJECT=$PWD
+
+pnpm --dir web install
+pnpm --dir web tauri:dev
+```
+
+Desktop defaults to `COBRUST_PERSIST_SESSION=keychain` so relaunches can
+auto-unlock after the first `/login`. Override with
+`COBRUST_PERSIST_SESSION=none|file` and `COBRUST_PERSIST_SESSION_FILE`
+when testing server-style persistence modes.
+
 ---
 
 ## Configuration

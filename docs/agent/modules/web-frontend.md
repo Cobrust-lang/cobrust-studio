@@ -169,9 +169,9 @@ web/
   directory same-origin from the `cobrust-studio serve` binary.
 - **Desktop build** (M9T, ADR-0013): Tauri v2 hosts the same SvelteKit
   build output inside a desktop WebView while an embedded Studio server
-  binds `127.0.0.1:0`. Frontend API code must keep resolving the server
-  base URL through a runtime-provided value rather than hardcoding a
-  public port.
+  binds `127.0.0.1:0`. The WebView loads the resolved loopback HTTP URL
+  directly, so `fetch('/api/...')` and `EventSource('/api/events')`
+  remain same-origin and need no base-URL shim for M9T.
 
 ### SSE plumbing
 
@@ -213,6 +213,8 @@ pnpm run lint           # gate 2 — prettier --check .
 pnpm run build          # gate 3 — adapter-static -> web/build/
 pnpm run test:unit      # gate 4 — vitest (Wave M2 TEST)
 pnpm run test:e2e       # gate 5 — playwright (Wave M2 TEST; skipped by default)
+pnpm run tauri:dev      # M9T desktop dev shell (Tauri + embedded loopback server)
+pnpm run tauri:build    # M9T desktop bundle build
 ```
 
 All six pass on the M2 deliverable; gate 5 reports "skipped" unless
@@ -363,10 +365,11 @@ config change.
    interactions (drag-drop Kanban, command palette, multi-step
    wizards), revisit the hand-rolled-primitive call.
 
-2. **Tauri base URL injection** — M9T must decide the exact frontend
-   runtime contract for the embedded loopback server URL (for example,
-   window bootstrap state vs Tauri command). The constraint is binding:
-   no hardcoded public port in frontend API calls.
+2. **(Closed Wave M9T)** Tauri base URL injection — M9T chose the
+   loopback-origin approach: Tauri opens the WebView at the embedded
+   server's resolved `http://127.0.0.1:<ephemeral>/` URL, so the existing
+   relative `/api` frontend contract remains valid and no public port is
+   hardcoded.
 
 3. **`GET /api/finding/:id` singleton route** — the finding detail
    dialog is summary-only because the M1 server contract deferred

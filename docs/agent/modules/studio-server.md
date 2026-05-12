@@ -280,27 +280,47 @@ Verified locally (commit 3b56d0e): release build produces the binary,
 smoke run with PORT=37878 PASSes — Studio sees its own 6 constitutional
 ADRs (0001..0006) via the same HTTP surface the M2 frontend uses.
 
-### Wave M9T (planned — ADR-0013 Tauri desktop runtime)
+### Wave M9T (as-built — ADR-0013 Tauri desktop runtime)
 
 Tauri becomes the primary desktop shell while this crate remains the
-HTTP/SSE backend boundary. M9T should not rewrite the route surface; it
-starts an embedded Studio server bound to `127.0.0.1:0`, discovers the
-resolved port, and gives the WebView a runtime base URL.
+HTTP/SSE backend boundary. The route surface is unchanged: the desktop
+app starts an embedded Studio server bound to `127.0.0.1:0`, discovers
+the resolved port, and opens the WebView at that loopback origin. Because
+the WebView loads the same HTTP origin as the API, existing frontend
+relative `/api/*` calls keep working without a custom protocol rewrite.
 
-Binding server-side constraints for M9T:
+New public server helper in `crates/studio-server/src/lib.rs`:
 
-- Keep `cobrust-studio serve --project <path> --port <N> [--host <addr>]`
-  supported as the headless/server entrypoint.
-- Add any embedded-server helper in a way that reuses the existing
-  `build_router(AppState)` and watcher/auto-unlock boot paths instead of
-  duplicating route setup.
-- Bind the desktop embedded server only to `127.0.0.1` with an ephemeral
-  port (`0`); do not expose a fixed public port.
-- Preserve the REST/SSE contract used by `web/src/lib/api.ts` until
-  ADR-0012 stabilises tool-call semantics.
-- Desktop smoke should prove that the app shell can load `/login`
-  against the embedded server, while the existing `serve` test/release
-  path stays green.
+```text
+serve_embedded(args: &ServeArgs) -> EmbeddedServer
+  - reuses the same store/router/persist/dev-key boot path as serve()
+  - enforces loopback bind for embedded mode
+  - returns base_url() with the OS-chosen ephemeral port
+  - shutdown() sends graceful shutdown and waits for the serve task
+```
+
+`EmbeddedServer::drop` also sends shutdown and aborts the task, so a
+Tauri app exit does not leave the loopback listener running.
+
+M9T preserves:
+
+- `cobrust-studio serve --project <path> --port <N> [--host <addr>]` as
+  the headless/server entrypoint.
+- `build_router(AppState)`, watcher bridge, M8 `auto_unlock_on_boot`, and
+  `--dev-api-key` injection as single shared boot logic.
+- The REST/SSE contract used by `web/src/lib/api.ts` until ADR-0012
+  stabilises tool-call semantics.
+
+New smoke gate:
+
+```text
+crates/studio-server/tests/embedded_server.rs
+  embedded_server_binds_ephemeral_loopback_and_serves_login
+    - starts serve_embedded() with port 0
+    - asserts loopback + non-zero port
+    - GETs <base_url>/login and expects 200
+    - shuts the embedded server down
+```
 
 ### Wave M8 (as-built — ADR-0009 persistent session across restart)
 

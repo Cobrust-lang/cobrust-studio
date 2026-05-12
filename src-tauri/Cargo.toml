@@ -1,0 +1,30 @@
+[package]
+name = "cobrust-studio-desktop"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.94"
+license = "Apache-2.0 OR MIT"
+authors = ["The Cobrust Studio Project"]
+repository = "https://github.com/Cobrust-lang/cobrust-studio"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+studio-server = { path = "../crates/studio-server" }
+tauri = { version = "2", features = [] }
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+unused_must_use = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+todo = "warn"
+dbg_macro = "warn"
+doc_markdown = "allow"
+module_name_repetitions = "allow"
