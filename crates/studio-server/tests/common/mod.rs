@@ -8,6 +8,8 @@
     clippy::used_underscore_items,
     clippy::used_underscore_binding,
     clippy::missing_panics_doc,
+    clippy::items_after_statements,
+    clippy::match_same_arms,
     dead_code
 )]
 

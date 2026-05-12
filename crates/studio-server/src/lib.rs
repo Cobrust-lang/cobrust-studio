@@ -9,7 +9,8 @@
 //! - [`build_router`] returns the configured Axum [`axum::Router`] with
 //!   `/api/health` + `/api/version` mounted, tracing + CORS middleware
 //!   layered, and a JSON 404 fallback.
-//! - [`serve`] binds the listener and runs the app until Ctrl-C.
+//! - [`serve`] binds the listener and runs `axum::serve` until the
+//!   process is signalled (graceful drain deferred to Wave A6+).
 //!
 //! Wave A4 extends with the real route surface listed in
 //! `docs/agent/modules/studio-server.md` §"Public surface (M1 target)":

@@ -1,19 +1,25 @@
 //! `GET /api/version` — workspace crate versions.
 //!
 //! Returns the `version()` const each crate exposes (per the convention
-//! locked in by the M0 scaffold) plus the compile-time `rustc` version
-//! from `RUSTC_VERSION` (set at build time; falls back to `"unknown"` if
-//! we ever switch to a build-script-less story). Static — does not read
-//! [`crate::AppState`].
+//! locked in by the M0 scaffold) plus the workspace `rust-version` pin
+//! (sourced from `CARGO_PKG_RUST_VERSION` — the MSRV, NOT the actual
+//! `rustc -V` of the build). Wave M2 can wire a `build.rs` capturing
+//! full rustc banner if M2 UI needs the binary discriminator. Static
+//! — does not read [`crate::AppState`].
 //!
 //! ```json
 //! {
 //!   "studio_server": "0.0.1",
 //!   "studio_store":  "0.0.1",
 //!   "studio_router": "0.0.1",
-//!   "rustc": "rustc 1.94.1 (29ea6fb6a 2026-03-24)"
+//!   "rustc": "1.94"
 //! }
 //! ```
+//!
+//! Note: the `rustc` field is `"1.94"` not `"rustc 1.94.1 (sha date)"`.
+//! Per A3 review F-A3-02 this is intentional for the 5-day MVP — the
+//! workspace `rust-version` pin is the M1 contract, full banner is M2+
+//! polish.
 
 use axum::Json;
 use axum::http::StatusCode;

@@ -84,6 +84,13 @@ check_last_verified() {
     if ! echo "$sha" | grep -qE '^[0-9a-f]{7,40}$'; then
         fail "$file last_verified_commit='$sha' does not look like a git SHA (F20 enforcement; expected 7-40 hex chars)"
     fi
+    # F-A3-01 closure: verify the SHA actually exists as a reachable
+    # commit. Hex-shape alone passes typos like `deadbee` (valid hex
+    # but not a real commit). git cat-file -e is the canonical
+    # reachability check; works in subshell so we can suppress stderr.
+    if ! git cat-file -e "${sha}^{commit}" 2>/dev/null; then
+        fail "$file last_verified_commit='$sha' is hex-shaped but does NOT resolve to a reachable git commit (F20 enforcement: SHA must exist in repo history)"
+    fi
 }
 for md in docs/agent/modules/*.md; do
     [ -f "$md" ] || continue
