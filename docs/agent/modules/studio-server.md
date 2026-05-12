@@ -1,7 +1,7 @@
 ---
 doc_kind: module
 module_id: studio-server
-last_verified_commit: 5619072
+last_verified_commit: abfd1c7
 dependencies: [adr:0001, adr:0002, adr:0003, adr:0006]
 ---
 
@@ -80,9 +80,12 @@ All 10 M1 routes landed; each handler returns
 - `GET /api/events`
   → `text/event-stream` of JSON-bodied state-change events
     (`adr_added | adr_modified | adr_removed | finding_added |
-    finding_modified | finding_removed | heartbeat`). 15s
-    keep-alive; lagged subscribers (256-event cap per ADR-0006 §F-07)
-    skip forward — no Last-Event-ID reconnection in M1.
+    finding_modified | finding_removed`). 15s SSE keep-alive comment
+    frames (not a typed `heartbeat` event — F-A4-02 reconcile dropped
+    the doc claim because the watcher bridge never publishes that
+    variant; the M2 frontend should treat the comment frames as raw
+    aliveness signals). Lagged subscribers (256-event cap per ADR-0006
+    §F-07) skip forward — no Last-Event-ID reconnection in M1.
 
 - `POST /api/dispatch`
   → 503 `{ code: "router_not_configured" }` while `AppState.router`

@@ -1,7 +1,7 @@
 ---
 doc_kind: module
 module_id: studio-store
-last_verified_commit: 36651a4
+last_verified_commit: abfd1c7
 dependencies: [adr:0003, adr:0004, adr:0006]
 ---
 
@@ -75,14 +75,23 @@ pub use studio_store::{
 
 ```rust
 pub struct AdrSummary { adr_id, title, status, date: String, path: PathBuf }
-pub struct Adr        { summary: AdrSummary, body: String,
+pub struct Adr        { summary: AdrSummary,   // #[serde(flatten)] — A5 reconcile
+                        body: String,
                         supersedes, superseded_by: Vec<String> }
 pub struct AdrDraft   { title, status, date, body: String,
                         adr_id: Option<String>, supersedes: Vec<String> }
 pub enum   AdrChangeEvent { Added(PathBuf), Modified(PathBuf), Removed(PathBuf) }
 
 // (Finding* symmetric; FindingSummary.date carries last_verified_commit
-//  since findings don't always have a separate date field on-disk.)
+//  since findings don't always have a separate date field on-disk.
+//  Finding.summary is also #[serde(flatten)] — A5 reconcile.)
+//
+// Wire shape: serde_json renders `Adr` / `Finding` with the summary
+// fields flattened to the top level of the JSON object — `{ "adr_id":
+// 7, "title": "...", "status": "...", ..., "body": "...", "supersedes":
+// [], "superseded_by": [] }`, not `{ "summary": {...}, "body": "..." }`.
+// The M1 wire contract in `crates/studio-server/tests/{adr,finding}_routes.rs`
+// pins this shape; without the flatten the listing UI parses nothing.
 
 // Re-exports from studio-router — identical wire shape, no shadow type.
 pub use studio_router::ledger::{LedgerEntry, Outcome};
