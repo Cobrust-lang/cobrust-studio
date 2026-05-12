@@ -139,10 +139,78 @@ for the "I forgot my passphrase" case.
 
 ---
 
+---
+
+## Provider selection (M7, ADR-0008)
+
+Starting in v0.3.0 the `/login` page shows a **Provider** dropdown between
+the Model field and the Passphrase field.
+
+### Dropdown options
+
+| Value | Label | Use for |
+|-------|-------|---------|
+| `anthropic` | Anthropic API | `api.anthropic.com` or compatible shims |
+| `openai` | OpenAI-compatible (vLLM / DeepSeek / Together / OpenRouter / Groq / Ollama) | Any `POST /chat/completions` endpoint |
+
+### URL hint
+
+As you type the Base URL, the form auto-suggests a provider kind:
+
+- URL contains `anthropic.com` → dropdown auto-selects **Anthropic API**.
+- URL is non-empty and does not contain `anthropic.com` → dropdown
+  auto-selects **OpenAI-compatible**.
+
+You can override the suggestion by changing the dropdown manually.
+
+### Wire format
+
+`provider_kind` is an additive field in the POST body:
+
+```json
+{
+  "endpoint": "https://api.openai.com/v1",
+  "api_key": "sk-...",
+  "model": "gpt-5",
+  "passphrase": "...",
+  "provider_kind": "openai"
+}
+```
+
+Omitting `provider_kind` (e.g. old curl scripts) defaults to `"anthropic"`,
+preserving backward compatibility with v0.2.x.
+
+### Synthetic provider rejected at /login
+
+`provider_kind: "synthetic"` is rejected by the server with
+`400 { code: "invalid_provider_kind" }`. The synthetic provider is a
+CLI/dev-only construct (see `--dev-api-key` below) with no real-world
+endpoint + key pair; submitting it via the login form is a category error.
+
+### `--dev-api-key` + `--dev-provider-kind`
+
+The `--dev-api-key` CLI flag (and `COBRUST_DEV_API_KEY` env var) can be
+combined with `--dev-provider-kind` to inject an OpenAI-compat session at
+boot without going through `/login`:
+
+```bash
+cobrust-studio serve \
+  --project /path/to/project \
+  --dev-api-key sk-... \
+  --dev-endpoint https://api.openai.com/v1 \
+  --dev-model gpt-5 \
+  --dev-provider-kind openai
+```
+
+Defaults to `anthropic` if `--dev-provider-kind` is omitted (v0.2.x
+backward compat).
+
+---
+
 ## Related Documents
 
 - ADR-0007: Secret storage AEAD round-trip design decision
-- ADR-0008: Multi-provider /login (v0.3.x, Phase 2 pending)
+- ADR-0008: Multi-provider /login (v0.3.0, Phase 2 implemented)
 - ADR-0003: Auth model (custom-endpoint-first)
 - `crates/studio-server/src/secret.rs`: Implementation
 - `crates/studio-server/src/routes/login.rs`: Route handlers

@@ -1,8 +1,8 @@
 ---
 doc_kind: module
 module_id: studio-server
-last_verified_commit: 3753a2b
-dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0007]
+last_verified_commit: 7985cfd
+dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0007, adr:0008]
 ---
 
 # Module: studio-server
@@ -272,6 +272,63 @@ cleanup: trap-kill on exit
 Verified locally (commit 3b56d0e): release build produces the binary,
 smoke run with PORT=37878 PASSes — Studio sees its own 6 constitutional
 ADRs (0001..0006) via the same HTTP surface the M2 frontend uses.
+
+### Wave M7 (as-built — ADR-0008 multi-provider /login)
+
+M7 closes Sarah v3 audit finding #3 (multi-provider /login is a v0.3.x blocker).
+The session-driven dispatch path now supports both `AnthropicProvider` and
+`OpenAiProvider` (vLLM / DeepSeek / Together / OpenRouter / Groq / Ollama) via
+an explicit `provider_kind` field on `LoginRequest` and `EndpointSecret`.
+
+Changes per ADR-0008:
+
+**`crates/studio-router/src/config.rs`**:
+- `ProviderKind` gains `#[default]` (= `Anthropic`) so `#[serde(default)]` on
+  `EndpointSecret::provider_kind` yields `Anthropic` for pre-M7 blobs.
+
+**`crates/studio-server/src/secret.rs`**:
+- `EndpointSecret` gains `#[serde(default)] pub provider_kind: ProviderKind`.
+  Pre-M7 blobs (no field in ciphertext JSON) deserialize to `Anthropic`.
+- `pub use studio_router::ProviderKind` re-exported from the crate root.
+- `SessionKey::seal_raw(&[u8]) -> Result<Vec<u8>, SecretError>` added for
+  integration tests that construct pre-M7 payloads by hand.
+
+**`crates/studio-server/src/routes/login.rs`**:
+- `LoginRequest` gains `#[serde(default)] pub provider_kind: ProviderKind`.
+  `Synthetic` is rejected with `400 { code: "invalid_provider_kind" }`.
+  `provider_kind` is plumbed into the constructed `EndpointSecret`.
+
+**`crates/studio-server/src/routes/dispatch.rs`**:
+- `build_session_provider(&EndpointSecret) → Result<(Arc<dyn LlmProvider>,
+  &'static str), Response>` helper extracted.
+- `resolve_router()` calls `build_session_provider` instead of hardcoding
+  `AnthropicProvider::new`. Match arms: `Anthropic` → `AnthropicProvider`,
+  `Openai` → `OpenAiProvider`, `Synthetic` → 503 defense-in-depth.
+
+**`crates/studio-server/src/cli.rs`**:
+- `ServeArgs` gains `--dev-provider-kind <KIND>` (default `anthropic`,
+  env `COBRUST_DEV_PROVIDER_KIND`).
+
+**`crates/studio-server/src/lib.rs`**:
+- `serve()` plumbs `args.dev_provider_kind` into the `--dev-api-key`
+  boot-time `EndpointSecret`.
+
+Integration tests (`tests/multi_provider_login.rs`, 6 tests):
+- `login_anthropic_then_dispatch` — wiremock Anthropic stub → 200.
+- `login_openai_then_dispatch` — wiremock OpenAI stub → 200.
+- `login_synthetic_returns_400` — 400 + code `invalid_provider_kind`.
+- `login_missing_provider_kind_defaults_anthropic` — back-compat 200.
+- `re_login_changes_provider_kind` — same passphrase, different kind, both 200.
+- `existing_blob_decryption_supplies_kind` — pre-M7 JSON blob opens as Anthropic.
+
+```text
+crates/studio-server/src/
+├── secret.rs            # + provider_kind: ProviderKind field + seal_raw()
+│                        # + pub use studio_router::ProviderKind
+└── routes/
+    ├── login.rs         # + provider_kind: ProviderKind + Synthetic rejection
+    └── dispatch.rs      # + build_session_provider() + match arm on kind
+```
 
 ### Wave M6 (as-built — ADR-0007 AEAD round-trip)
 

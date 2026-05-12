@@ -135,10 +135,74 @@ v0.3.x ADR 项目。在那之前,轮换 passphrase 的步骤是:
 
 ---
 
+---
+
+## Provider 选择（M7，ADR-0008）
+
+从 v0.3.0 起，`/login` 页面在模型字段和口令字段之间新增了 **Provider** 下拉选项。
+
+### 下拉选项
+
+| 值 | 标签 | 适用场景 |
+|----|------|---------|
+| `anthropic` | Anthropic API | `api.anthropic.com` 或兼容接口 |
+| `openai` | OpenAI 兼容接口（vLLM / DeepSeek / Together / OpenRouter / Groq / Ollama） | 任意 `POST /chat/completions` 端点 |
+
+### URL 自动提示
+
+填写 Base URL 时，表单会自动建议对应的 provider 类型：
+
+- URL 包含 `anthropic.com` → 自动选择 **Anthropic API**。
+- URL 非空且不包含 `anthropic.com` → 自动选择 **OpenAI 兼容接口**。
+
+用户可在建议后手动修改下拉选项。
+
+### 请求体格式
+
+`provider_kind` 是 POST 体中的新增字段（向后兼容）：
+
+```json
+{
+  "endpoint": "https://api.openai.com/v1",
+  "api_key": "sk-...",
+  "model": "gpt-5",
+  "passphrase": "...",
+  "provider_kind": "openai"
+}
+```
+
+省略 `provider_kind`（例如旧版 curl 脚本）时，服务器默认为 `"anthropic"`，
+保持与 v0.2.x 的向后兼容性。
+
+### Synthetic provider 不允许通过 /login
+
+`provider_kind: "synthetic"` 会被服务器拒绝，返回 `400 { code: "invalid_provider_kind" }`。
+Synthetic provider 是仅限 CLI/开发模式使用的构造（参见下方 `--dev-api-key`），
+没有真实的端点和密钥对，通过登录表单提交毫无意义。
+
+### `--dev-api-key` + `--dev-provider-kind`
+
+CLI 标志 `--dev-api-key`（或环境变量 `COBRUST_DEV_API_KEY`）可与
+`--dev-provider-kind` 组合使用，在启动时注入 OpenAI 兼容的会话，无需通过
+`/login` 界面：
+
+```bash
+cobrust-studio serve \
+  --project /path/to/project \
+  --dev-api-key sk-... \
+  --dev-endpoint https://api.openai.com/v1 \
+  --dev-model gpt-5 \
+  --dev-provider-kind openai
+```
+
+省略 `--dev-provider-kind` 时默认为 `anthropic`（保持 v0.2.x 向后兼容性）。
+
+---
+
 ## 相关文档
 
 - ADR-0007:密钥存储 AEAD 轮次设计决策
-- ADR-0008:多 provider /login (v0.3.x,Phase 2 待实现)
+- ADR-0008:多 provider /login (v0.3.0，Phase 2 已实现)
 - ADR-0003:认证模型(自定义端点优先)
 - `crates/studio-server/src/secret.rs`:实现代码
 - `crates/studio-server/src/routes/login.rs`:路由处理
