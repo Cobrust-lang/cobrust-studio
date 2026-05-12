@@ -118,13 +118,13 @@ pub async fn create_finding(
     if body.finding_id.trim().is_empty() {
         return Err(RouteError::bad_request(
             "finding_id must be non-empty",
-            "invalid_input",
+            "invalid_body",
         ));
     }
     if body.title.trim().is_empty() {
         return Err(RouteError::bad_request(
             "title must be non-empty",
-            "invalid_input",
+            "invalid_body",
         ));
     }
     let draft = body.into_draft();

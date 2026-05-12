@@ -166,11 +166,11 @@ pub async fn dispatch_sse(
         Err(e) => {
             // Collapse every JSON-extractor rejection onto the uniform
             // `invalid_body` code so callers don't have to branch on a
-            // status taxonomy — the spec contract in
-            // `tests/dispatch_router_some.rs::dispatch_with_invalid_body_returns_400`
-            // accepts `invalid_input` / `invalid_body` / `invalid_request`
-            // but NOT `unsupported_media_type` (which would force a
-            // different M2 banner). The HTTP status from `JsonRejection`
+            // status taxonomy. Per A5 review F-A5-04, ALL semantic-
+            // validation 400 paths across adr/finding/auth/dispatch
+            // routes now use `invalid_body` (was: split between
+            // `invalid_input` and `invalid_body`). The HTTP status from
+            // `JsonRejection`
             // (415 for wrong content-type, 422 for parse failure) is
             // preserved on the wire — only the JSON body's `code` is
             // normalised.

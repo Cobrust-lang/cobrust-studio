@@ -69,9 +69,12 @@ pub enum EventEnvelope {
         /// Absolute path.
         path: String,
     },
-    /// Heartbeat / keepalive marker so the M2 UI can detect a stuck
-    /// stream. Emitted by the SSE infrastructure, not by the watcher.
-    Heartbeat,
+    // Note: per A5 review F-A5-02, no `Heartbeat` variant. SSE
+    // liveness comes from `axum::response::sse::KeepAlive` comment
+    // frames (line starts with `:`) — not a typed event. If M2+
+    // needs a typed heartbeat (some proxies strip SSE comments),
+    // re-introduce here AND wire an actual publisher in
+    // `build_router` (`tokio::time::interval` spawn).
 }
 
 /// Fan-out hub. Cloning the hub yields more `Sender` handles backed by
@@ -148,7 +151,9 @@ mod tests {
     async fn publish_with_no_subscribers_does_not_panic() {
         let hub = EventHub::new();
         // No subscriber yet; publish drops the event silently.
-        hub.publish(EventEnvelope::Heartbeat);
+        hub.publish(EventEnvelope::AdrAdded {
+            path: "/tmp/probe.md".into(),
+        });
         assert_eq!(hub.subscriber_count(), 0);
     }
 
@@ -157,15 +162,17 @@ mod tests {
         let hub = EventHub::new();
         let mut rx_a = hub.subscribe();
         let mut rx_b = hub.subscribe();
-        hub.publish(EventEnvelope::Heartbeat);
+        hub.publish(EventEnvelope::AdrAdded {
+            path: "/tmp/probe.md".into(),
+        });
         // Each subscriber gets its own copy.
         assert!(matches!(
             rx_a.recv().await.unwrap(),
-            EventEnvelope::Heartbeat
+            EventEnvelope::AdrAdded { .. }
         ));
         assert!(matches!(
             rx_b.recv().await.unwrap(),
-            EventEnvelope::Heartbeat
+            EventEnvelope::AdrAdded { .. }
         ));
     }
 }

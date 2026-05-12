@@ -96,20 +96,23 @@ All 10 M1 routes landed; each handler returns
     `model` field is empty, `messages` is empty, or a message carries
     an unknown role (anything other than `system|user|assistant`).
   → SSE `text/event-stream` when router is `Some(_)` and body is
-    valid (Wave A5 as-built). Exactly one event is emitted:
-    - `event: done` on dispatch success — JSON payload
+    valid (Wave A5 as-built). Frame sequence:
+    - `event: chunk` (≥ 1 frames) — JSON `{ delta: string }` emitted
+      as the response text streams. **Today** these are cosmetic
+      word-boundary splits of the full router response (deterministic
+      via `Router::dispatch_with_tag`); **M2+** plumbs real
+      [`studio_router::LlmProvider::complete_stream`] deltas without
+      changing the wire shape. Clients must concatenate `delta`
+      values verbatim (whitespace preserving).
+    - `event: done` (exactly 1 frame, terminal) — JSON
       `{ provider, model, text, usage, cache_hit, task_tag }`. The
-      `task_tag` field echoes [`DispatchContext::task_tag`] from the
-      request body so clients can correlate the dispatch with their
-      own ledger row.
-    - `event: error` on router failure — JSON `{ error, code }` with
-      refined codes (`router_auth | router_rate_limit |
-      router_bad_request | router_transport | router_server |
-      router_failed | router_no_provider | router_config |
-      router_io`).
-    Per-`Chunk` streaming is M2+ once
-    [`studio_router::LlmProvider::complete_stream`] is plumbed
-    through `Router`; today `Router::dispatch` is non-streaming.
+      `task_tag` echoes [`DispatchContext::task_tag`] from the
+      request body for client-side ledger correlation.
+    - `event: error` (terminal, replaces `done` on router failure) —
+      JSON `{ error, code }` with refined codes (`router_auth |
+      router_rate_limit | router_bad_request | router_transport |
+      router_server | router_failed | router_no_provider |
+      router_config | router_io`).
 
 #### Watcher bridge
 

@@ -12,9 +12,9 @@
 //!   freshly written [`studio_store::Adr`].
 //!
 //! Validation errors (`title.trim().is_empty()` etc.) surface as `400
-//! invalid_input`; conflicts (duplicate file on disk) as `409
-//! already_exists`; SQL/IO failures as `500 internal_error`. See
-//! [`crate::RouteError`] for the full mapping.
+//! invalid_body` (unified per A5 review F-A5-04); conflicts (duplicate
+//! file on disk) as `409 already_exists`; SQL/IO failures as
+//! `500 internal_error`. See [`crate::RouteError`] for the full mapping.
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
@@ -138,7 +138,7 @@ pub async fn create_adr(
     if body.title.trim().is_empty() {
         return Err(RouteError::bad_request(
             "title must be non-empty",
-            "invalid_input",
+            "invalid_body",
         ));
     }
     let draft = body.into_draft();

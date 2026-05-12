@@ -76,6 +76,5 @@ fn event_kind_tag(envelope: &EventEnvelope) -> &'static str {
         EventEnvelope::FindingAdded { .. } => "finding_added",
         EventEnvelope::FindingModified { .. } => "finding_modified",
         EventEnvelope::FindingRemoved { .. } => "finding_removed",
-        EventEnvelope::Heartbeat => "heartbeat",
     }
 }
