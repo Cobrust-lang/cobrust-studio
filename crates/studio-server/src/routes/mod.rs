@@ -17,9 +17,11 @@
 #![allow(clippy::missing_errors_doc)]
 
 pub mod adr;
+pub mod finding;
 pub mod health;
 pub mod version;
 
 pub use adr::{AdrDraftBody, AdrListResponse};
+pub use finding::{FindingDraftBody, FindingListResponse};
 pub use health::{HealthResponse, health};
 pub use version::{VersionResponse, version};
