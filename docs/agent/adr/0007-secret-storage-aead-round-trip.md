@@ -1,7 +1,7 @@
 ---
 adr_id: "0007"
 title: M6 secret-storage — AEAD round-trip for /login → dispatch
-status: proposed
+status: accepted
 date: 2026-05-12
 supersedes: []
 superseded_by: []
