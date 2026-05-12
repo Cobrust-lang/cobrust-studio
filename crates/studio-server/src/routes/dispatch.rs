@@ -17,23 +17,22 @@
 //!   "router_not_configured" }` (F-A4-01 reconcile — Wave A4's local
 //!   inline struct shortcut was dropped).
 //! - `router.is_some()` + valid body → SSE `text/event-stream`. The
-//!   response text from `Router::dispatch_with_tag` is split into
-//!   word-sized pieces and emitted as a sequence of `event: chunk`
-//!   `data:` frames, followed by exactly one `event: done` frame
-//!   carrying the [`studio_router::DispatchResponse`] summary plus the
-//!   caller-supplied `task_tag`. `Router::dispatch_with_tag` itself is
-//!   non-streaming on the inside; once `LlmProvider::complete_stream`
-//!   plumbs through the router (M2+) the chunks will become real
-//!   provider deltas without changing the wire surface.
+//!   response text from `Router::dispatch_ctx` is split into word-sized
+//!   pieces and emitted as a sequence of `event: chunk` `data:` frames,
+//!   followed by exactly one `event: done` frame carrying the
+//!   [`studio_router::DispatchResponse`] summary plus the caller-supplied
+//!   `task_tag`. `Router::dispatch_ctx` itself is non-streaming on the
+//!   inside; once `LlmProvider::complete_stream` plumbs through the router
+//!   (M2+) the chunks will become real provider deltas without changing the
+//!   wire surface.
 //! - Router-level failure → `event: error` then close.
 //! - Malformed body → 400 `{ error, code: "invalid_body" }` JSON
 //!   (via `JsonRejection` → `RouteError::bad_request`).
 //!
 //! The `done` payload carries the caller-supplied `task_tag` from the
-//! request body (per [`crate::DispatchContext`], ADR-0006 §F-03) and
-//! `Router::dispatch_with_tag` persists the same tag into the router's
-//! JSONL ledger so downstream `/api/ledger/recent` queries can
-//! correlate by tag.
+//! request body (per [`studio_router::DispatchContext`], ADR-0010) and
+//! `Router::dispatch_ctx` persists the same tag into the router's JSONL
+//! ledger so downstream `/api/ledger/recent` queries can correlate by tag.
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -50,20 +49,19 @@ use futures::StreamExt;
 use futures::stream::{self, Stream};
 use serde::{Deserialize, Serialize};
 use studio_router::{
-    AnthropicProvider, CompletionRequest, DispatchResponse, LlmError, LlmProvider, Message,
-    OpenAiProvider, ProviderKind, Role, RouterBuilder, RouterConfig, RouterError, SamplingParams,
-    TokenUsage,
+    AnthropicProvider, CompletionRequest, DispatchContext, DispatchResponse, LlmError, LlmProvider,
+    Message, OpenAiProvider, ProviderKind, Role, RouterBuilder, RouterConfig, RouterError,
+    SamplingParams, TokenUsage,
 };
 
 use crate::AppState;
 use crate::error::RouteError;
 use crate::secret::SecretError;
-use crate::state::DispatchContext;
 
 /// Body shape for `POST /api/dispatch`. Mirrors
 /// [`studio_router::CompletionRequest`] plus a caller-supplied
-/// `task_tag` field (per ADR-0006 §F-03,
-/// [`crate::DispatchContext`] threads this into the dispatch call site).
+/// `task_tag` field (per ADR-0010, [`studio_router::DispatchContext`]
+/// threads this into the dispatch call site).
 ///
 /// `model` and `messages` are required at the JSON level; the absence
 /// of either yields a 400 `invalid_body`. Sampling params default per
@@ -78,8 +76,9 @@ pub struct DispatchRequest {
     /// Optional sampling parameters; absent → [`SamplingParams::default`].
     #[serde(default)]
     pub params: SamplingParams,
-    /// Optional caller-supplied tag (e.g. `"agent-turn"`); threaded into
-    /// [`DispatchContext::task_tag`] and echoed in the `done` SSE event.
+    /// Optional caller-supplied tag (e.g. `"agent-turn"`); validated,
+    /// threaded into [`DispatchContext::task_tag`], and echoed in the `done`
+    /// SSE event.
     #[serde(default)]
     pub task_tag: Option<String>,
 }
@@ -321,8 +320,8 @@ models = ["{model}"]
 ///   exactly one `event: done` frame with the [`DonePayload`] summary, or
 ///   one `event: error` frame on router failure.
 ///
-/// The chunking is purely cosmetic on the wire — `Router::dispatch_with_tag`
-/// is still non-streaming on the inside; once `LlmProvider::complete_stream`
+/// The chunking is purely cosmetic on the wire — `Router::dispatch_ctx` is
+/// still non-streaming on the inside; once `LlmProvider::complete_stream`
 /// plumbs through the router (M2+) the chunks will become real provider
 /// deltas. Until then we split on word boundaries to keep the UI's
 /// "streaming response" illusion alive (matching the M1 wire contract in
@@ -366,7 +365,7 @@ pub async fn dispatch_sse(
     // one `event: chunk` per piece, then a final `event: done` with the
     // dispatch summary (and caller-supplied `task_tag`).
     let stream = stream::once(async move {
-        match router.dispatch_with_tag(ctx.task_tag.clone(), cr).await {
+        match router.dispatch_ctx(cr, ctx.clone()).await {
             Ok(resp) => Ok::<_, Infallible>(StreamPhase::Done {
                 resp,
                 task_tag: ctx.task_tag,
@@ -496,9 +495,32 @@ fn into_completion_request(
         params: req.params,
     };
     let ctx = DispatchContext {
-        task_tag: req.task_tag,
+        task_tag: validate_task_tag(req.task_tag)?,
+        ..DispatchContext::default()
     };
     Ok((cr, ctx))
+}
+
+fn validate_task_tag(task_tag: Option<String>) -> Result<Option<String>, RouteError> {
+    let Some(task_tag) = task_tag else {
+        return Ok(None);
+    };
+    if task_tag.is_empty() {
+        return Ok(None);
+    }
+    if task_tag.len() > 256 {
+        return Err(RouteError::bad_request(
+            "task_tag must be <= 256 bytes",
+            "task_tag_too_long",
+        ));
+    }
+    if task_tag.chars().any(char::is_control) {
+        return Err(RouteError::bad_request(
+            "task_tag must not contain control characters",
+            "task_tag_invalid_chars",
+        ));
+    }
+    Ok(Some(task_tag))
 }
 
 fn parse_role(s: &str) -> Option<Role> {

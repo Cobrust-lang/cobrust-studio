@@ -1,8 +1,8 @@
 ---
 doc_kind: module
 module_id: studio-router
-last_verified_commit: a99d304
-dependencies: [adr:0005, adr:0006]
+last_verified_commit: 45ad600
+dependencies: [adr:0005, adr:0006, adr:0010]
 ---
 
 # Module: studio-router
@@ -26,7 +26,7 @@ Per ADR-0006 §Decision. Verified by
 - `cache::{Cache, CacheKey}`
 - `ledger::{Ledger, LedgerEntry, Outcome}`
 - `config::{ProviderConfig, ProviderKind, ProviderModel, RouterConfig}`
-- `router::{Router, RouterBuilder, RouterError, RetryPolicy, DispatchResponse, Strategy}`
+- `router::{Router, RouterBuilder, RouterError, RetryPolicy, DispatchContext, DispatchResponse, Strategy}`
 
 ## Dispatch contract
 
@@ -38,11 +38,24 @@ let router = RouterBuilder::new()
 
 let resp: DispatchResponse =
     router.dispatch(CompletionRequest { /* ... */ }).await?;
+
+let tagged: DispatchResponse = router
+    .dispatch_ctx(
+        CompletionRequest { /* ... */ },
+        DispatchContext {
+            task_tag: Some("code-review".to_string()),
+            ..DispatchContext::default()
+        },
+    )
+    .await?;
 ```
 
 Single dispatch only — no `Task` enum at the call site, no
-`Strategy::Consensus`. Ledger `task_tag` is `Option<String>` (caller-
-supplied via future API surface; today defaults to `None`).
+`Strategy::Consensus`. ADR-0010 adds `DispatchContext` and
+`Router::dispatch_ctx`; `Router::dispatch(req)` remains the v0.3.x
+compatibility path and delegates to the default context. Ledger
+`task_tag` is `Option<String>` and is now caller-supplied via
+`DispatchContext::task_tag`.
 
 ## Strip provenance (ADR-0006)
 
@@ -66,18 +79,19 @@ Same module split as upstream:
 - `ledger.rs` — JSONL append-only token ledger
 - `config.rs` — `studio.toml` parser + defaults + `Strategy` enum
 - `router.rs` — strategy + retry + dispatch (Strategy re-exported
-  from config to satisfy ADR-0006's `pub use router::Strategy`)
+  from config to satisfy ADR-0006's `pub use router::Strategy`;
+  `DispatchContext` + `dispatch_ctx` added by ADR-0010)
 
 ## Tests
 
-- 47 unit tests (collocated `#[cfg(test)]` blocks)
+- 49 unit tests (collocated `#[cfg(test)]` blocks)
   - `provider.rs` × 5 — `TokenUsage` + `LlmError` classification
   - `anthropic.rs` × 2 — body builder + status classifier
   - `openai.rs` × 2 — body builder + status classifier
   - `cache.rs` × 12 — key determinism, namespace, perms (0600/0700)
   - `ledger.rs` × 12 — schema + concurrent writes + 0600 perms
   - `config.rs` × 7 — parse + validate + Strategy serde + defaults
-  - `router.rs` × 4 — retry policy + EWMA + strategy exhaustiveness
+  - `router.rs` × 6 — retry policy + EWMA + strategy exhaustiveness + `dispatch_ctx` ledger flow
 - 4 integration tests under `tests/`
   - `strip_invariants.rs` × 2 — public-surface lock-in + exhaustive
     `Strategy` match (compile-fail on consensus re-introduction)
@@ -88,6 +102,7 @@ Same module split as upstream:
 
 - ADR-0005 (router lift)
 - ADR-0006 (public API surface + strip list)
+- ADR-0010 (DispatchContext + task_tag plumbing)
 - Upstream: `cobrust-lang/cobrust` `crates/cobrust-llm-router/` @ SHA
   `61f2aff` (v0.1.1)
 - src: `crates/studio-router/`

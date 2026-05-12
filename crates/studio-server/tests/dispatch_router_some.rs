@@ -547,6 +547,85 @@ async fn dispatch_propagates_task_tag_to_ledger() {
 }
 
 #[tokio::test]
+async fn dispatch_without_task_tag_records_none_in_ledger() {
+    let (_tmp, root, app) = boot_app_with_synthetic_router().await;
+    let body = sample_completion_request(None);
+    let resp = oneshot_post_sse(&app, "/api/dispatch", &body).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let _drain = read_sse_body_with_timeout(resp, Duration::from_secs(5), 64 * 1024).await;
+
+    let jsonl_path = root.join(LEDGER_JSONL_PATH);
+    let jsonl_text = tokio::fs::read_to_string(&jsonl_path)
+        .await
+        .expect("router ledger JSONL must exist after dispatch");
+    let last_line = jsonl_text
+        .lines()
+        .rev()
+        .find(|line| !line.is_empty())
+        .expect("ledger line");
+    let last: Value = serde_json::from_str(last_line).expect("ledger line JSON");
+    assert!(
+        last.get("task_tag").is_some_and(Value::is_null),
+        "omitted task_tag must record JSON null; got entry={last}",
+    );
+}
+
+#[tokio::test]
+async fn dispatch_empty_task_tag_normalises_to_none() {
+    let (_tmp, root, app) = boot_app_with_synthetic_router().await;
+    let body = sample_completion_request(Some(""));
+    let resp = oneshot_post_sse(&app, "/api/dispatch", &body).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let sse_text = read_sse_body_with_timeout(resp, Duration::from_secs(5), 64 * 1024).await;
+    assert!(
+        sse_text.contains(r#""task_tag":null"#),
+        "empty task_tag must echo as null in done payload: {sse_text}",
+    );
+
+    let jsonl_path = root.join(LEDGER_JSONL_PATH);
+    let jsonl_text = tokio::fs::read_to_string(&jsonl_path)
+        .await
+        .expect("router ledger JSONL must exist after dispatch");
+    let last_line = jsonl_text
+        .lines()
+        .rev()
+        .find(|line| !line.is_empty())
+        .expect("ledger line");
+    let last: Value = serde_json::from_str(last_line).expect("ledger line JSON");
+    assert!(
+        last.get("task_tag").is_some_and(Value::is_null),
+        "empty task_tag must record JSON null; got entry={last}",
+    );
+}
+
+#[tokio::test]
+async fn dispatch_task_tag_too_long_returns_400() {
+    let (_tmp, _root, app) = boot_app_with_synthetic_router().await;
+    let long_tag = "x".repeat(257);
+    let body = sample_completion_request(Some(&long_tag));
+    let resp = oneshot_post_sse(&app, "/api/dispatch", &body).await;
+    let (status, body) = status_and_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body.get("code").and_then(Value::as_str),
+        Some("task_tag_too_long")
+    );
+}
+
+#[tokio::test]
+async fn dispatch_task_tag_with_newline_returns_400() {
+    let (_tmp, _root, app) = boot_app_with_synthetic_router().await;
+    let body = sample_completion_request(Some("code-review\nretry"));
+    let resp = oneshot_post_sse(&app, "/api/dispatch", &body).await;
+    let (status, body) = status_and_json(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body.get("code").and_then(Value::as_str),
+        Some("task_tag_invalid_chars"),
+    );
+}
+
+#[tokio::test]
 async fn dispatch_with_invalid_body_returns_400() {
     let (_tmp, _root, app) = boot_app_with_synthetic_router().await;
     // Send raw non-JSON bytes; the JSON extractor must reject before

@@ -40,6 +40,18 @@ pub struct DispatchResponse {
     pub cache_hit: bool,
 }
 
+/// Caller-supplied dispatch metadata. Optional fields; pass
+/// [`DispatchContext::default`] when only the LLM payload matters.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DispatchContext {
+    /// Free-form caller-supplied tag for ledger filtering.
+    pub task_tag: Option<String>,
+    /// Reserved for deadline-aware retry / circuit-break work.
+    pub deadline_hint: Option<Duration>,
+    /// Reserved for distributed-trace correlation.
+    pub span_id: Option<String>,
+}
+
 /// Router-level errors. `LlmError`s from individual provider attempts are
 /// rolled into `AllFailed` once the preferred list is exhausted.
 #[derive(Debug, thiserror::Error)]
@@ -240,18 +252,6 @@ impl Router {
         RouterBuilder::new()
     }
 
-    /// Optional caller-supplied tag persisted in each ledger entry. Defaults
-    /// to `None` when callers do not set one. ADR-0006 strip #4 generalised
-    /// the upstream `Task` enum to this single free-form field; pass
-    /// `Some("agent-turn")` (or any caller-meaningful label) when the
-    /// downstream consumer wants to correlate ledger lines.
-    fn task_tag_for_request(_req: &CompletionRequest) -> Option<String> {
-        // Future: thread caller-supplied tag through `CompletionRequest`
-        // metadata. Today the dispatch contract is task-tag-less, matching
-        // ADR-0006 §"M1 dispatch contract".
-        None
-    }
-
     /// Dispatch one request. Honours the configured strategy, retries
     /// transient errors per the retry policy, falls through to the next
     /// preferred provider on permanent failure, writes one ledger entry per
@@ -260,24 +260,34 @@ impl Router {
     /// # Errors
     /// See [`RouterError`] variants.
     pub async fn dispatch(&self, req: CompletionRequest) -> Result<DispatchResponse, RouterError> {
+        self.dispatch_ctx(req, DispatchContext::default()).await
+    }
+
+    /// Dispatch one request with caller-supplied metadata.
+    ///
+    /// Identical semantics to [`Self::dispatch`] otherwise — same cache,
+    /// strategy, retry, and provider-fallthrough behaviour. The context is
+    /// deliberately kept out of [`CompletionRequest`] because the request body
+    /// is part of the cache key while dispatch metadata is not.
+    ///
+    /// # Errors
+    /// See [`RouterError`] variants.
+    pub async fn dispatch_ctx(
+        &self,
+        req: CompletionRequest,
+        ctx: DispatchContext,
+    ) -> Result<DispatchResponse, RouterError> {
         if self.preferred.is_empty() {
             return Err(RouterError::NoProvider);
         }
         let order = self.order_preferred().await;
-        let tag = Self::task_tag_for_request(&req);
-        self.dispatch_ordered(tag, &req, &order).await
+        self.dispatch_ordered(ctx.task_tag, &req, &order).await
     }
 
-    /// Dispatch one request with a caller-supplied `task_tag` that is
-    /// persisted into each ledger entry written during this dispatch.
+    /// Dispatch one request with a caller-supplied `task_tag`.
     ///
-    /// Identical semantics to [`Self::dispatch`] otherwise — same cache,
-    /// strategy, retry, and provider-fallthrough behaviour. Wave A5
-    /// reconcile added this overload so `studio-server`'s
-    /// `POST /api/dispatch` can thread `DispatchContext::task_tag`
-    /// (ADR-0006 §F-03) into the ledger without going through the
-    /// `CompletionRequest` body (which is keyed by the cache and so
-    /// cannot carry mutable metadata).
+    /// Prefer [`Self::dispatch_ctx`] for new callers; this compatibility helper
+    /// remains for the Wave A5 server wiring and delegates to the context API.
     ///
     /// # Errors
     /// See [`RouterError`] variants.
@@ -286,11 +296,14 @@ impl Router {
         task_tag: Option<String>,
         req: CompletionRequest,
     ) -> Result<DispatchResponse, RouterError> {
-        if self.preferred.is_empty() {
-            return Err(RouterError::NoProvider);
-        }
-        let order = self.order_preferred().await;
-        self.dispatch_ordered(task_tag, &req, &order).await
+        self.dispatch_ctx(
+            req,
+            DispatchContext {
+                task_tag,
+                ..DispatchContext::default()
+            },
+        )
+        .await
     }
 
     async fn order_preferred(&self) -> Vec<ProviderModel> {
@@ -520,6 +533,103 @@ impl RouterHandle {
 )]
 mod tests {
     use super::*;
+    use std::pin::Pin;
+
+    use futures::stream;
+    use tempfile::TempDir;
+
+    const ECHO_PROVIDER_NAME: &str = "synth";
+
+    struct EchoProvider;
+
+    #[async_trait::async_trait]
+    impl LlmProvider for EchoProvider {
+        fn name(&self) -> &str {
+            ECHO_PROVIDER_NAME
+        }
+
+        fn kind(&self) -> crate::config::ProviderKind {
+            crate::config::ProviderKind::Synthetic
+        }
+
+        async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, LlmError> {
+            Ok(CompletionResponse {
+                text: req
+                    .messages
+                    .first()
+                    .map_or_else(String::new, |m| m.content.clone()),
+                model: req.model,
+                usage: crate::provider::TokenUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 2,
+                },
+            })
+        }
+
+        fn complete_stream(
+            &self,
+            _req: CompletionRequest,
+        ) -> Pin<Box<dyn futures::Stream<Item = Result<crate::provider::Chunk, LlmError>> + Send>>
+        {
+            Box::pin(stream::empty())
+        }
+    }
+
+    async fn test_router() -> (TempDir, std::path::PathBuf, Router) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().to_path_buf();
+        let cache_dir = root.join("cache");
+        let ledger_path = root.join("ledger.jsonl");
+        let cache_dir_toml = cache_dir.to_string_lossy().replace('\\', "/");
+        let ledger_path_toml = ledger_path.to_string_lossy().replace('\\', "/");
+        let toml = format!(
+            r#"
+[router]
+strategy = "quality"
+cache_dir = "{cache_dir_toml}"
+ledger_path = "{ledger_path_toml}"
+preferred = ["synth:synthetic-1"]
+
+[providers.synth]
+kind = "synthetic"
+base_url = "https://example.invalid"
+api_key_env = ""
+models = ["synthetic-1"]
+"#,
+        );
+        let cfg = RouterConfig::from_toml_str(&toml).expect("config parse");
+        let router = RouterBuilder::new()
+            .register_provider("synth", Arc::new(EchoProvider))
+            .build(&cfg)
+            .await
+            .expect("router build");
+        (tmp, ledger_path, router)
+    }
+
+    fn request() -> CompletionRequest {
+        CompletionRequest {
+            model: "synthetic-1".to_string(),
+            messages: vec![crate::provider::Message {
+                role: crate::provider::Role::User,
+                content: "hello".to_string(),
+            }],
+            params: crate::provider::SamplingParams::default(),
+        }
+    }
+
+    async fn last_task_tag(path: &std::path::Path) -> Option<String> {
+        let text = tokio::fs::read_to_string(path).await.expect("read ledger");
+        let line = text
+            .lines()
+            .rev()
+            .find(|line| !line.is_empty())
+            .expect("ledger line");
+        let value: serde_json::Value = serde_json::from_str(line).expect("json ledger line");
+        value
+            .get("task_tag")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string)
+    }
 
     #[test]
     fn retry_policy_honours_retry_after() {
@@ -557,6 +667,43 @@ mod tests {
         }
         let v = t.get(key).expect("must exist");
         assert!((v - 100.0).abs() < 0.5, "EWMA should converge: {v}");
+    }
+
+    #[tokio::test]
+    async fn dispatch_default_context_matches_legacy_dispatch() {
+        let (_tmp_a, ledger_a, router_a) = test_router().await;
+        let resp_a = router_a.dispatch(request()).await.expect("legacy dispatch");
+        assert!(!resp_a.cache_hit);
+        assert_eq!(last_task_tag(&ledger_a).await, None);
+
+        let (_tmp_b, ledger_b, router_b) = test_router().await;
+        let resp_b = router_b
+            .dispatch_ctx(request(), DispatchContext::default())
+            .await
+            .expect("context dispatch");
+        assert!(!resp_b.cache_hit);
+        assert_eq!(last_task_tag(&ledger_b).await, None);
+        assert_eq!(resp_a, resp_b);
+    }
+
+    #[tokio::test]
+    async fn dispatch_ctx_task_tag_flows_to_ledger() {
+        let (_tmp, ledger_path, router) = test_router().await;
+        let resp = router
+            .dispatch_ctx(
+                request(),
+                DispatchContext {
+                    task_tag: Some("code-review".to_string()),
+                    ..DispatchContext::default()
+                },
+            )
+            .await
+            .expect("context dispatch");
+        assert!(!resp.cache_hit);
+        assert_eq!(
+            last_task_tag(&ledger_path).await.as_deref(),
+            Some("code-review")
+        );
     }
 
     #[test]

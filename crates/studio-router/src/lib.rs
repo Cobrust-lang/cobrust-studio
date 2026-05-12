@@ -59,7 +59,7 @@ pub use crate::config::{ProviderConfig, ProviderKind, ProviderModel, RouterConfi
 // Router (RouterResponse → DispatchResponse per strip #6;
 // Strategy::Consensus removed per strip #1; Task enum removed per strip #3).
 pub use crate::router::{
-    DispatchResponse, RetryPolicy, Router, RouterBuilder, RouterError, Strategy,
+    DispatchContext, DispatchResponse, RetryPolicy, Router, RouterBuilder, RouterError, Strategy,
 };
 
 /// Crate version.

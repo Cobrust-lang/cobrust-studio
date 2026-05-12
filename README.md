@@ -357,7 +357,7 @@ Top friction items design partners would file against me, in priority order:
 3. ~~**Multi-provider `/login`**~~ ✅ shipped in M7 (v0.3.0) — `LoginRequest` + `EndpointSecret` gain `provider_kind` (Anthropic / OpenAI-compat); the SvelteKit form adds a Provider dropdown with URL-based auto-suggest. vLLM / DeepSeek / Together / OpenRouter / Groq / Ollama now work end-to-end via the session path. ADR-0008 Phase 2 merged.
 4. ~~**Persistent session across binary restart**~~ ✅ shipped in M8 (v0.4.0) — `--persist-session=keychain|file` wraps the user passphrase in OS keychain (macOS Keychain / freedesktop secret-service / Windows DPAPI) OR a `0600` plaintext file (Docker / D-Bus-less Linux fallback). Boot auto-unlock re-derives the `SessionKey` without a `/login` round-trip. `POST /api/logout?purge=true` for hard-forget. ADR-0009 Phase 2 merged.
 5. **A `--multi-user` mode** with proper RBAC + audit log (post-MVP, M7+)
-6. **`task_tag` plumbing through `CompletionRequest`** (ADR-0006 §F-03 noted; partial today)
+6. ~~**`task_tag` dispatch metadata**~~ ✅ shipping in M9 (v0.4.0) — `studio_router::DispatchContext` + `Router::dispatch_ctx`; `/api/dispatch.task_tag` now records into the JSONL ledger for cost-by-task analysis without polluting `CompletionRequest`. ADR-0010 closes ADR-0006 §F-03.
 7. **Persona simulation in CI** — already-run human-in-the-loop (Mei / Aleksandr / Sarah v1-v3 audits all landed), not yet automated
 
 I'm `hakureirm` on GitHub. File issues with the `design-partner` label.

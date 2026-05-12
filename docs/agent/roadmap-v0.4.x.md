@@ -1,7 +1,7 @@
 ---
 doc_kind: roadmap
 roadmap_id: v0.4.x
-last_verified_commit: a6fed82
+last_verified_commit: 45ad600
 status: live
 ---
 
@@ -37,30 +37,27 @@ The queue is therefore resequenced around a new runtime foundation wave:
 
 ### M9T — Tauri desktop shell (ADR-0013)
 
-- **Status**: Phase 1 ADR accepted; Phase 2 implementation is the next
-  foundation wave.
+- **Status**: landed locally on `main` at `45ad600` (`feat(desktop): add
+  Tauri loopback shell for M9T`). Not pushed from this checkout.
 - **Why now**: user explicitly changed product direction on 2026-05-13:
   "有战略大变化,我希望前端使用tauri来实现". Runtime and packaging assumptions
-  should shift before more UI-heavy work lands.
-- **Scope**: add `src-tauri/` with Tauri v2 configuration; reuse the
-  existing `web/` SvelteKit build; start the Studio server on
-  `127.0.0.1:0`; pass the resolved base URL to the WebView; keep
-  `cobrust-studio serve` as compatibility/headless mode.
-- **Estimated**: ~180-240 min Opus-class P9 work plus a packaging
-  readiness review.
-- **Gate emphasis**: avoid cold clean builds unless disk space is
-  confirmed; reuse existing Rust/Node caches. Add at least one desktop
-  smoke/build gate that proves `/login` loads against the embedded
-  server.
+  shifted before more UI-heavy work lands.
+- **Scope shipped**: independent `src-tauri/` Tauri v2 crate; existing
+  `web/` SvelteKit build reused; embedded Studio server binds
+  `127.0.0.1:0`; dynamic WebView opens the resolved loopback URL; the
+  `cobrust-studio serve` path remains compatibility/headless mode.
+- **Gate emphasis**: cold desktop bundle builds are still intentionally
+  deferred until disk space is comfortable, but the locked Tauri check,
+  clippy, Svelte check, server smoke, and doc gates passed locally.
 
 ### M9 — `task_tag` plumbing (ADR-0010)
 
-- **Status**: Phase 1 spike landed (`c0dcd57`); Phase 2 P9 dispatch
-  queued after M9T so ledger semantics are stable in the desktop shell.
-- **Scope**: `DispatchContext` newtype + `Router::dispatch_ctx` method +
-  per-iteration ledger entries via `task_tag`. Wire format additive
-  (back-compat with v0.3.0 callers).
-- **Estimated**: ~60-90 min Sonnet 4.6.
+- **Status**: completed locally after M9T; not pushed from this checkout.
+- **Scope**: `studio_router::DispatchContext` newtype +
+  `Router::dispatch_ctx` method + per-iteration ledger entries via
+  `task_tag`. Wire format additive (back-compat with v0.3.0 callers).
+  Route-layer validation rejects tags over 256 bytes or containing
+  control characters; empty string normalises to `None`.
 - **Closes**: ADR-0006 §F-03 deferred decision; user-dogfooder
   cost-by-task-type ledger filtering.
 

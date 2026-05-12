@@ -1,8 +1,8 @@
 ---
 doc_kind: module
 module_id: studio-server
-last_verified_commit: fd7eecc
-dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0007, adr:0008, adr:0009, adr:0013]
+last_verified_commit: 45ad600
+dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0007, adr:0008, adr:0009, adr:0010, adr:0013]
 ---
 
 # Module: studio-server
@@ -96,19 +96,24 @@ All 10 M1 routes landed; each handler returns
   → 400 `{ code: "invalid_body" }` when the JSON body is missing, the
     `model` field is empty, `messages` is empty, or a message carries
     an unknown role (anything other than `system|user|assistant`).
+  → 400 `{ code: "task_tag_too_long" }` when optional `task_tag` is over
+    256 bytes.
+  → 400 `{ code: "task_tag_invalid_chars" }` when optional `task_tag`
+    contains control characters. Empty string normalises to `None`.
   → SSE `text/event-stream` when router is `Some(_)` and body is
     valid (Wave A5 as-built). Frame sequence:
     - `event: chunk` (≥ 1 frames) — JSON `{ delta: string }` emitted
       as the response text streams. **Today** these are cosmetic
       word-boundary splits of the full router response (deterministic
-      via `Router::dispatch_with_tag`); **M2+** plumbs real
+      via `Router::dispatch_ctx`); **M2+** plumbs real
       [`studio_router::LlmProvider::complete_stream`] deltas without
       changing the wire shape. Clients must concatenate `delta`
       values verbatim (whitespace preserving).
     - `event: done` (exactly 1 frame, terminal) — JSON
       `{ provider, model, text, usage, cache_hit, task_tag }`. The
-      `task_tag` echoes [`DispatchContext::task_tag`] from the
-      request body for client-side ledger correlation.
+      `task_tag` echoes [`studio_router::DispatchContext::task_tag`]
+      from the request body and the same value is written to the router
+      JSONL ledger for cost-by-task analysis.
     - `event: error` (terminal, replaces `done` on router failure) —
       JSON `{ error, code }` with refined codes (`router_auth |
       router_rate_limit | router_bad_request | router_transport |

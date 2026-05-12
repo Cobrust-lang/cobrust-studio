@@ -6,6 +6,22 @@ All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepac
 
 ### Added
 
+- **M9 `task_tag` dispatch metadata (ADR-0010 Phase 2)** —
+  closes ADR-0006 §F-03 and the README design-partner friction item
+  for ledger cost analysis by task type.
+  - `studio-router` now exports `DispatchContext` and
+    `Router::dispatch_ctx(req, ctx)`. The existing `Router::dispatch(req)`
+    remains compatible and delegates to `DispatchContext::default()`.
+  - `POST /api/dispatch` forwards optional `task_tag` through
+    `DispatchContext::task_tag`, echoes it in the SSE `done` frame, and
+    records it into the router JSONL ledger.
+  - Route-layer validation rejects tags over 256 bytes with
+    `task_tag_too_long`, rejects control characters with
+    `task_tag_invalid_chars`, and normalises `""` to `None`.
+  - Coverage: 2 router unit tests for `dispatch_ctx` ledger flow and 4
+    dispatch-route integration tests for omitted / empty / too-long /
+    newline task tags.
+
 - **M8 persistent session across binary restart (ADR-0009 Phase 2)** —
   closes Sarah v3/v4 audit Gate B + README §"Looking for 3-5 design
   partners" item 4 + the dogfooder friction the user named as the

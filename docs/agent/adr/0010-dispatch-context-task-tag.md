@@ -1,7 +1,7 @@
 ---
 adr_id: "0010"
 title: M9 DispatchContext — task_tag plumbing + extensible dispatch metadata
-status: proposed
+status: accepted
 date: 2026-05-12
 supersedes: []
 superseded_by: []
