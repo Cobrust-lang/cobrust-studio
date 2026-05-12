@@ -34,10 +34,12 @@ test('create finding via the modal — row appears with the right severity badge
 	await page.getByRole('button', { name: /\+ New finding/i }).click();
 
 	await page.getByPlaceholder('m2-frontend-tab-leak').fill('m2-test-fixture');
-	// Title is the second text input in the modal (after finding_id).
-	await page.locator('input[type="text"]').nth(2).fill('Test finding title');
-	// Severity select — pick P1.
-	await page.locator('select').first().selectOption('P1');
+	// Title field — use label-based selector (prior `input[type="text"].nth(2)`
+	// picked up `last_verified_commit` because the modal has 5 text inputs
+	// and nth(2) was off-by-one; M4.2 fix per F-M4-01 followup audit).
+	await page.getByLabel('Title').fill('Test finding title');
+	// Severity select — pick P1. Use label-based selector for the same reason.
+	await page.getByLabel('Severity').selectOption('P1');
 
 	const post = page.waitForRequest(
 		(req) => req.url().endsWith('/api/finding') && req.method() === 'POST'
