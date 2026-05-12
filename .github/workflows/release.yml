@@ -94,6 +94,24 @@ jobs:
           $hash = (Get-FileHash "dist/${stage}.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  ${stage}.zip" | Out-File -Encoding utf8 "dist/${stage}.zip.sha256"
 
+      # Extract the matching [x.y.z] section from CHANGELOG.md and feed
+      # it to the GitHub release body. Closes Mei v3 P1 ("empty release
+      # body" on v0.2.0/v0.2.1/v0.3.0 pre-backfill). Runs per-platform
+      # (idempotent — softprops sets body once, the rest are no-ops).
+      - name: Extract release notes from CHANGELOG
+        if: matrix.target == 'x86_64-unknown-linux-gnu'   # one runner only
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          # Print lines between `## [VERSION]` and the next `## [` header.
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { p = 1; print; next }
+            p && /^## \[/ { exit }
+            p { print }
+          ' CHANGELOG.md > release-notes.md
+          echo "--- extracted notes (head) ---"
+          head -5 release-notes.md
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -102,6 +120,10 @@ jobs:
             dist/cobrust-studio-v*-${{ matrix.target }}.tar.gz.sha256
             dist/cobrust-studio-v*-${{ matrix.target }}.zip
             dist/cobrust-studio-v*-${{ matrix.target }}.zip.sha256
+          # body_path only attaches on the linux-x86_64 runner (the extract
+          # step's `if:` guard). Other runners attach assets only; softprops
+          # is idempotent so the release body is set exactly once per tag.
+          body_path: ${{ matrix.target == 'x86_64-unknown-linux-gnu' && 'release-notes.md' || '' }}
           fail_on_unmatched_files: false
           generate_release_notes: false
           # If the release was created manually (e.g. via `gh release create`)

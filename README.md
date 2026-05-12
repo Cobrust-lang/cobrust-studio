@@ -60,34 +60,45 @@ ADSD repo above without ever installing Studio.
 
 ---
 
-## Try it (5 minutes, build from source)
+## Try it (5 minutes, pre-built tarball)
 
-You need `rustup` (Rust 1.94+), `pnpm` (Node 20+ for SvelteKit), and a git
-repository to point Studio at.
+Every release tag ships 5 platform builds — **linux x86_64 + aarch64,
+macOS x86_64 + arm64, windows x86_64**. Grab one from
+[the latest releases page](https://github.com/Cobrust-lang/cobrust-studio/releases/latest)
+and you have a working binary in under 60 seconds. No Rust toolchain,
+no Node, no `pnpm` — Studio is a single binary with the SvelteKit
+frontend baked in via rust-embed.
 
 ```bash
-git clone https://github.com/Cobrust-lang/cobrust-studio && cd cobrust-studio
-bash scripts/build-release.sh
-# → target/release/cobrust-studio (9.0 MiB self-contained binary)
+# Example for macOS arm64; pick the tarball matching your platform:
+curl -sL https://github.com/Cobrust-lang/cobrust-studio/releases/latest/download/cobrust-studio-v0.3.0-aarch64-apple-darwin.tar.gz | tar xz
+cd cobrust-studio-v0.3.0-aarch64-apple-darwin
 
-# Dogfood mode: Studio managing its own repo
-./target/release/cobrust-studio serve --project . --port 7878
+# Dogfood mode: point Studio at THIS extracted directory (or any other git repo)
+./cobrust-studio serve --project . --port 7878
 open http://localhost:7878
 ```
 
 You should see Studio's 5 pages:
 
 - **/login** — paste your LLM endpoint + API key (custom endpoint or OpenAI-compatible)
-- **/adr** — list/detail/create the 6 ADRs that live in this repo (`docs/agent/adr/`)
+- **/adr** — list/detail/create the 6+ ADRs that live in this repo (`docs/agent/adr/`)
 - **/agent** — write a prompt, submit, watch the SSE stream of completion chunks
 - **/finding** — list the failures + bug postmortems captured during development
 - **/ledger** — every LLM dispatch with provider, model, tokens, latency, cost
 
-**Pre-built tarballs**: every release tag ships 5 platform builds —
-linux x86_64 + aarch64, macOS x86_64 + arm64, windows x86_64. Grab
-one from
-[the releases page](https://github.com/Cobrust-lang/cobrust-studio/releases/latest)
-and skip the `cargo build` step.
+### Build from source (alternative)
+
+If you'd rather build it yourself, you need `rustup` (Rust 1.94+),
+`pnpm` (Node 20+ for SvelteKit), and a git repository to point Studio
+at.
+
+```bash
+git clone https://github.com/Cobrust-lang/cobrust-studio && cd cobrust-studio
+bash scripts/build-release.sh
+# → target/release/cobrust-studio (~9 MiB self-contained binary)
+./target/release/cobrust-studio serve --project . --port 7878
+```
 
 ---
 
@@ -227,7 +238,7 @@ specs.
 
 ---
 
-## What's in this repo right now (v0.2.1)
+## What's in this repo right now (v0.3.0)
 
 - ✅ 3 crates compile clean, ~200 tests pass (33 ok groups, 0 FAILED)
 - ✅ 14 Playwright e2e specs (13 active + 1 STUDIO_E2E_ROUTER-gated; all pass)
@@ -239,7 +250,7 @@ specs.
 - ✅ `scripts/smoke-dogfood.sh` end-to-end 5-step smoke (incl. M6 `/api/login` round-trip)
 - ✅ doc-coverage CI gate enforces 7 invariants (crate agent-docs / zh-en parity / ADR frontmatter / ADR id monotonic / `last_verified_commit` is a real git SHA / `cargo fmt --check` / cargo test exit 0 AND 0 FAILED groups)
 - ✅ 5 findings filed (3 closed + 2 closed by the post-tag M4 audit)
-- ✅ **5-platform tarballs ship first-time green on v0.2.1**: linux
+- ✅ **5-platform tarballs ship first-time green on v0.2.1 + v0.3.0** (two consecutive tags): linux
   x86_64 + aarch64, macOS x86_64 + arm64, windows x86_64. macOS x86_64
   cross-compiles from `macos-14` (Apple Silicon) using
   `--target=x86_64-apple-darwin`, eliminating the `macos-13` runner-
@@ -311,21 +322,23 @@ honest mistakes:
 - **v0.1.0** shipped with a critical SPA fallback bug
   ([`Path<String>` on `Router::fallback`](docs/agent/findings/m4-release-readiness-spa-fallback-extractor.md))
 - **v0.1.1** shipped with a stale `Cargo.lock`
-- **v0.2.0** shipped with a subtle crypto bug — `SessionKey::seal()`
-  packed a fresh random salt instead of the derive salt, silently
-  breaking the re-derive round-trip. Caught the day of release by
-  Playwright e2e test 2, fixed in `3753a2b` before any user touched
-  the broken release.
+- **v0.2.0** shipped with a subtle crypto bug
+  ([`SessionKey::seal()` packed a fresh random salt instead of the
+  derive salt](docs/agent/findings/m6-aead-seal-salt-mismatch.md)),
+  silently breaking the re-derive round-trip. Caught the day of
+  release by Playwright e2e test 2, fixed in `3753a2b` before any
+  user touched the broken release.
 
 Each was caught by the audit pattern (hermetic Playwright + clean-
 shell probe + persona-driven re-test) and named in the CHANGELOG by
 file:line.
 
-**v0.2.1 is the current stable tag.** It's the first one to ship all
-5 platform tarballs first-time green (Sarah v2 pilot-gate #3 closed).
-The CHANGELOG names every regression that came before it and the
-gate that missed each one. If you'd prefer a year-old tag where you
-don't see the patch dance, this isn't your project.
+**v0.3.0 is the current stable tag.** v0.2.1 was the first to ship all
+5 platform tarballs first-time green; v0.3.0 is the second consecutive
+5/5 (Sarah v2 pilot-gate #3 closed; release.yml cross-compile path
+proven durable). The CHANGELOG names every regression that came before
+it and the gate that missed each one. If you'd prefer a year-old tag
+where you don't see the patch dance, this isn't your project.
 
 The methodology discipline runs throughout the repo — see
 [`docs/agent/findings/cto-shougate-test-gate-grep-leak.md`](docs/agent/findings/cto-shougate-test-gate-grep-leak.md)

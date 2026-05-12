@@ -16,9 +16,10 @@
 	override the suggestion.
 -->
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import Button from '$lib/components/Button.svelte';
-	import { login, ApiError } from '$lib/api';
+	import { login, getVersion, ApiError } from '$lib/api';
 	import { cn } from '$lib/util';
 
 	let tab = $state<'api' | 'oauth'>('api');
@@ -29,6 +30,19 @@
 	let providerKind = $state<'anthropic' | 'openai'>('anthropic');
 	let submitting = $state(false);
 	let toast = $state<{ kind: 'ok' | 'err'; msg: string } | null>(null);
+
+	// Mei v3 P2: footer used to hardcode "v0.1.0" which drifted with every
+	// release. Fetch from /api/version on mount so the footer always
+	// matches the binary the user is talking to.
+	let version = $state<string>('…');
+	onMount(async () => {
+		try {
+			const v = await getVersion();
+			version = v.studio_server;
+		} catch {
+			version = 'unknown';
+		}
+	});
 
 	// M7 (ADR-0008): URL-based auto-suggest for provider kind.
 	// Reactive: typing the URL updates the dropdown, but the user can override.
@@ -158,7 +172,7 @@
 							type="password"
 							bind:value={passphrase}
 							autocomplete="new-password"
-							placeholder="used to derive the AEAD key"
+							placeholder="encrypts your API key at rest"
 							class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none font-mono"
 						/>
 					</label>
@@ -187,7 +201,7 @@
 			{/if}
 		</div>
 		<p class="mt-3 text-center text-[0.7rem] text-muted-foreground">
-			Studio is a single-binary, single-project, single-user MVP. v0.1.0.
+			Studio is a single-binary, single-project, single-user MVP. v{version}.
 		</p>
 	</div>
 </div>
