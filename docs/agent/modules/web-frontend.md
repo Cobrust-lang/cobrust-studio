@@ -1,7 +1,7 @@
 ---
 doc_kind: module
 module_id: web-frontend
-last_verified_commit: 0e699c4
+last_verified_commit: a66b365
 dependencies: [adr:0001, adr:0002, adr:0003, adr:0006]
 ---
 
@@ -200,14 +200,106 @@ pnpm install            # gate 0 — pinned by pnpm-lock.yaml
 pnpm run check          # gate 1 — svelte-kit sync && svelte-check
 pnpm run lint           # gate 2 — prettier --check .
 pnpm run build          # gate 3 — adapter-static -> web/build/
+pnpm run test:unit      # gate 4 — vitest (Wave M2 TEST)
+pnpm run test:e2e       # gate 5 — playwright (Wave M2 TEST; skipped by default)
 ```
 
-All four pass on the M2 deliverable.
+All six pass on the M2 deliverable; gate 5 reports "skipped" unless
+the harness env is set (see §Tests below).
 
 The Rust workspace 5-gate (`cargo fmt --check`, `cargo clippy -D
 warnings`, `cargo build`, `cargo test`, `bash scripts/doc-coverage.sh`)
 is unaffected — M2 frontend lives outside the workspace and modifies
 no Rust source.
+
+## Tests (Wave M2 TEST)
+
+Two layers, both inside `web/`:
+
+### Layer 1 — Vitest unit tests (fast, no browser)
+
+Lives next to the module under test in `src/lib/`:
+
+```
+src/lib/api.test.ts      # 20 tests — fetch wrapper + SSE consumer
+src/lib/crypto.test.ts   # 8 tests — encryptEndpointBlob round-trip
+src/lib/types.test.ts    # 4 tests — compile-time wire-shape pins
+```
+
+Total: 32 tests, runs in ~1s. Vitest `^3` + jsdom `^29` — pinned to
+v3 because v4 requires Vite 6 and the M2 frontend is on Vite 5.4.
+The setup file at `src/test-setup.ts` supplements Node's `webcrypto`
+if jsdom ever regresses `crypto.subtle`.
+
+Wire-contract pins (each maps to a section of
+`docs/agent/modules/studio-server.md`):
+
+- Every `fetch()` path in `src/lib/api.ts` — URL, method, headers,
+  request body, response envelope, error envelope.
+- SSE frame parsing (chunk / done / error / comment / unknown-event /
+  mid-frame TCP boundary) per the A5.1 守闸 doc.
+- `EncryptedBlob` triple `{ ciphertext, nonce, scheme }` and the
+  literal scheme tag `"aes-gcm-256/m2-stub"`.
+- Flat (post-A5-reconcile) `Adr` / `Finding` shapes — `adr_id` /
+  `finding_id` live at the top level, not nested under `summary`.
+
+Run:
+
+```
+pnpm run test:unit
+```
+
+### Layer 2 — Playwright end-to-end tests (browser, requires backend)
+
+Lives under `tests/e2e/`:
+
+```
+tests/e2e/_fixtures.ts   # shared skip-gate + env knobs
+tests/e2e/login.spec.ts  # 3 tests — endpoint config flow
+tests/e2e/adr.spec.ts    # 3 tests — list / create / detail
+tests/e2e/agent.spec.ts  # 2 tests — dispatch SSE (router-None + Some)
+tests/e2e/finding.spec.ts# 3 tests — list / create / summary detail
+tests/e2e/ledger.spec.ts # 3 tests — list / n-query / refresh
+```
+
+Total: 14 specs, **all skipped by default**. Flip `STUDIO_E2E=1` to
+run them against a live backend.
+
+Harness model (documented in `playwright.config.ts`):
+
+```
+┌──────────────────────┐    /api/*    ┌────────────────────────┐
+│ vite preview :4173   │ ──────────►  │ cobrust-studio :7878   │
+│ (adapter-static)     │   vite proxy │ --project <tempdir>    │
+└──────────────────────┘              └────────────────────────┘
+        ▲
+        │ navigation
+   ┌─────────┐
+   │chromium │  Playwright drives this.
+   └─────────┘
+```
+
+To run locally:
+
+```
+cargo build --bin cobrust-studio
+cobrust-studio serve --project $(mktemp -d) --port 7878 &
+STUDIO_E2E=1 pnpm run test:e2e
+```
+
+The agent-page router-on test additionally requires
+`STUDIO_E2E_ROUTER=1` plus a `studio.toml` declaring a synthetic
+provider in the tempdir.
+
+**Why the skip gate?** The hermetic harness — cargo build cache +
+spawn lifecycle + tempdir seeding + studio.toml fixturing — is a
+day-of-work on its own and was deferred to Wave M2.1 to keep
+M2 TEST tight (≤180 min). Until then the specs serve as living
+documentation of the UX contract + a one-flag path to a real run.
+
+Open question #6 (added Wave M2 TEST): when does the M2.1 hermetic
+harness land? Until it does, the e2e specs add zero CI signal — only
+manual-flip signal. Tracked separately from M2 release scope.
 
 ## Open questions for CTO (Wave M3)
 
