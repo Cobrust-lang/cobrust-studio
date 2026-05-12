@@ -98,7 +98,7 @@ test('POST /api/logout clears session — subsequent status returns false', asyn
 			endpoint: 'https://api.anthropic.com',
 			api_key: 'sk-m6-logout-test',
 			model: 'claude-opus-4-7',
-			passphrase: 'playwright-logout-test-m6'
+			passphrase: 'playwright-test-passphrase-m6'
 		}
 	});
 

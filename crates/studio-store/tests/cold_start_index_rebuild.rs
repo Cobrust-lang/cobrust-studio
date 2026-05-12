@@ -24,6 +24,31 @@ use studio_store::adr::AdrSummary;
 
 use common::{adr_dir, fresh_studio_root};
 
+/// Remove a file with Windows-friendly retry-on-busy.
+///
+/// `Store::close().await` awaits sqlx pool graceful shutdown, but on
+/// Windows the OS-level file handle (esp. for SQLite WAL mmap regions)
+/// can take a few extra ms to release after pool close resolves. Unix
+/// unlink semantics let you delete an open file; NT does not. Retry up
+/// to ~500ms with exponential backoff before propagating the error.
+/// On Linux/macOS the first attempt always succeeds, so the retry loop
+/// is a no-op there.
+fn windows_safe_remove_file(p: &std::path::Path) -> std::io::Result<()> {
+    let mut delay_ms = 10u64;
+    let mut attempts = 0;
+    loop {
+        match std::fs::remove_file(p) {
+            Ok(()) => return Ok(()),
+            Err(e) if attempts >= 6 => return Err(e),
+            Err(_) => {
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                delay_ms *= 2;
+                attempts += 1;
+            }
+        }
+    }
+}
+
 /// 4-digit prefixed ADR markdown — minimal valid frontmatter shape per
 /// `docs/agent/conventions.md`.
 fn write_adr_fixture(dir: &std::path::Path, id: u32, title: &str, status: &str) {
@@ -143,7 +168,7 @@ async fn index_rebuild_after_db_wipe_recovers_all_adrs() {
                 .and_then(|s| s.to_str())
                 .is_some_and(|s| s == "db")
         {
-            std::fs::remove_file(&p).expect("rm db");
+            windows_safe_remove_file(&p).expect("rm db");
         }
         // Also remove any sidecar -wal / -shm files SQLite might leave behind.
         let name = p
@@ -152,7 +177,7 @@ async fn index_rebuild_after_db_wipe_recovers_all_adrs() {
             .unwrap_or_default()
             .to_string();
         if name.ends_with(".db-wal") || name.ends_with(".db-shm") {
-            let _ = std::fs::remove_file(&p);
+            let _ = windows_safe_remove_file(&p);
         }
     }
 
@@ -192,7 +217,7 @@ async fn cold_start_picks_up_externally_added_markdown() {
                 .and_then(|s| s.to_str())
                 .is_some_and(|s| s == "db")
         {
-            std::fs::remove_file(&p).expect("rm db");
+            windows_safe_remove_file(&p).expect("rm db");
         }
     }
 

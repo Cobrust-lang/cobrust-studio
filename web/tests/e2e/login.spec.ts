@@ -36,7 +36,7 @@ test('login form validates required fields before POSTing', async ({ page }) => 
 	await expect(page.getByText(/all fields required/i)).toBeVisible();
 });
 
-test('login form rejects passphrases shorter than 8 chars', async ({ page }) => {
+test('login form rejects passphrases shorter than 8 chars (client-side)', async ({ page }) => {
 	await page.goto('/login');
 	await page.getByPlaceholder('https://api.anthropic.com').fill('https://api.anthropic.com');
 	await page.getByPlaceholder('sk-…').fill('sk-test-fixture-key');
@@ -51,7 +51,10 @@ test('successful login posts plaintext to /api/login and redirects to /adr', asy
 	await page.getByPlaceholder('https://api.anthropic.com').fill('https://api.anthropic.com');
 	await page.getByPlaceholder('sk-…').fill('sk-test-fixture-key');
 	await page.getByPlaceholder('claude-opus-4-7').fill('claude-opus-4-7');
-	await page.getByPlaceholder(/used to derive/i).fill('correct-horse-battery-staple');
+	// Use the same passphrase as login-aead.spec.ts to avoid the
+	// wrong-passphrase guard when both specs run against the same
+	// hermetic binary (session_kv blob persists across tests).
+	await page.getByPlaceholder(/used to derive/i).fill('playwright-test-passphrase-m6');
 
 	// Capture the request body — pin the (endpoint, api_key, model,
 	// passphrase) plaintext shape (ADR-0007 §"API surface change").
