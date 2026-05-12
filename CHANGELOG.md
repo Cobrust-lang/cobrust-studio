@@ -4,6 +4,55 @@ All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+### Changed
+
+- **Aleksandr v3 audit hardening** — Rust-senior code review of the
+  M6/M7 crypto surface surfaced 6 actionable items, all landed:
+  - **`Debug` redaction** on `LoginRequest` / `EndpointSecret` /
+    `ServeArgs`. Auto-derived `Debug` impls were a latent secret-
+    leak hazard (a future `tracing::instrument` on the login
+    handler, or any panic handler that formats `req`, would have
+    sprayed plaintext `api_key` / `passphrase` / `dev_api_key`
+    into structured logs). Hand-written impls now redact secrets
+    using the same pattern `SessionKey` already used. Blast
+    radius today is zero — no production code currently formats
+    these structs — but the latent hazard is gone. **Aleksandr
+    v3 P1**.
+  - **`aes-gcm` hardware acceleration** — `Cargo.toml` flips from
+    `aes-gcm = "0.10"` to `aes-gcm = { version = "0.10", features =
+    ["aes"] }`. Unlocks AES-NI on x86_64 + ARMv8 Crypto Extensions
+    on aarch64 across all 5 platforms Studio ships. No correctness
+    change; pure performance + future-proof for any hot-path AES
+    use beyond the login-dominated Argon2id path. **Aleksandr v3
+    P2 #3**.
+  - **`ProviderKind` is now `#[non_exhaustive]`** — prevents adding
+    Groq / vLLM / etc. variants in v0.4.x from being a semver-
+    breaking change for any downstream code matching the enum
+    exhaustively. Internal `match` sites in `dispatch.rs`,
+    `router_init.rs`, and `dispatch_real_llm_e2e.rs` gain `_ =>`
+    arms that surface `unsupported_provider_kind` rather than
+    panic on unknown variants. **Aleksandr v3 P3 #1**.
+  - **`SessionKey::seal_raw` marked `#[doc(hidden)]`** — signals
+    internal/test-only use in rustdoc. Stays `pub` (rather than
+    `pub(crate)`) because the integration test that uses it lives
+    in `tests/` which is external to the lib crate; `pub(crate)`
+    would have broken the existing access pattern. **Aleksandr v3
+    P3 #6**.
+
+  Aleksandr v3 verdict overall: "WITH-CAVEATS" — would `cargo
+  install`, would file PRs, would trust in a dep tree. Crypto
+  design is senior-grade.
+
+  Deferred Aleksandr v3 findings (documented in audit report,
+  not in this changelog entry):
+  - P2 zeroize on SessionKey/passphrase — out-of-scope per
+    ADR-0007 threat model
+  - P2 timing asymmetry (no-blob vs wrong-passphrase) — single-
+    user MVP context
+  - P3 wrong_passphrase guard discards decrypted EndpointSecret
+  - P3 SecretError::UnknownScheme dead variant
+  - P3 cargo-audit not installed locally
+
 ## [0.3.0] — 2026-05-12
 
 **M7 multi-provider /login release.** The `/login` page now supports
