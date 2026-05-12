@@ -1,31 +1,52 @@
 /**
- * Shared Playwright fixtures for the M2 e2e suite.
+ * Shared Playwright fixtures for the M3 hermetic e2e suite.
  *
- * `STUDIO_E2E=1` gates every spec — when unset, each spec calls
- * `test.skip(true, "...")` at the top so the suite passes with explicit
- * skips instead of failing on a missing backend. The CI / CTO can flip
- * the flag once the M2.1 wave introduces a hermetic harness.
+ * The M2 SKIPPED gate is gone; M3 spawns `target/release/cobrust-studio`
+ * from `globalSetup` (see `_setup.ts`) and exports the live base URL via
+ * `STUDIO_BASE_URL`. Specs read it through {@link studioBaseURL} so the
+ * test bodies never hard-code a port.
  *
- * The shared API base URL defaults to the dev-mode vite proxy target
- * (`http://127.0.0.1:7878`); override with `STUDIO_API_BASE`.
+ * Soft fallback: if the release binary is absent (the M3 DEV branch's
+ * `scripts/build-release.sh` not yet merged into the test run's workspace),
+ * `_setup.ts` writes `STUDIO_E2E_SKIP=1` and every spec calls
+ * {@link skipIfHarnessDisabled} to short-circuit with a clear reason —
+ * keeping CI green during cross-branch handoff.
+ *
+ * Anchor: docs/agent/modules/web-frontend.md §Tests (Wave M3 hermetic).
  */
 import { test as base } from '@playwright/test';
 
-export const STUDIO_E2E_ENABLED = process.env.STUDIO_E2E === '1';
-export const STUDIO_API_BASE = process.env.STUDIO_API_BASE ?? 'http://127.0.0.1:7878';
-
-/**
- * Use at the top of every e2e file to short-circuit when the harness
- * is not wired. Keeps the suite green in default `pnpm run test:e2e`
- * runs while preserving the spec as living documentation.
- */
-export function skipUnlessE2E(why = 'STUDIO_E2E=1 not set — M2.1 harness wiring TODO'): void {
-	if (!STUDIO_E2E_ENABLED) base.skip(true, why);
+/** Live studio-server base URL, populated by `_setup.ts`. */
+export function studioBaseURL(): string {
+	const url = process.env.STUDIO_BASE_URL;
+	if (!url) {
+		throw new Error(
+			'STUDIO_BASE_URL not set — global setup did not run. ' +
+				'Check web/tests/e2e/_setup.ts spawned the binary.'
+		);
+	}
+	return url;
 }
 
 /**
- * Light wrapper around the default Playwright `test` object — extension
- * surface kept minimal for M2; M2.1 will add tempdir + spawn fixtures.
+ * Call from `test.beforeEach()` to short-circuit when the hermetic
+ * harness deliberately skipped (release binary absent in this checkout).
+ * The M2 `STUDIO_E2E=1` opt-in semantics are inverted: M3 runs by default,
+ * skips only when the binary is missing.
+ */
+export function skipIfHarnessDisabled(): void {
+	if (process.env.STUDIO_E2E_SKIP === '1') {
+		base.skip(
+			true,
+			process.env.STUDIO_E2E_SKIP_REASON || 'hermetic harness disabled — release binary missing'
+		);
+	}
+}
+
+/**
+ * Re-exported `test` and `expect`. The harness fixture surface stays thin
+ * for M3; richer fixtures (per-test ledger seeding, etc.) land at M4 if
+ * needed.
  */
 export const test = base;
 export { expect } from '@playwright/test';
