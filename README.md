@@ -83,8 +83,11 @@ You should see Studio's 5 pages:
 - **/finding** — list the failures + bug postmortems captured during development
 - **/ledger** — every LLM dispatch with provider, model, tokens, latency, cost
 
-Pre-built tarball at M5 (CI matrix for linux x86_64 + linux aarch64 + macos).
-Today only the macos arm64 tarball is auto-built (`scripts/release-tarball.sh`).
+**Pre-built tarballs**: every release tag ships 5 platform builds —
+linux x86_64 + aarch64, macOS x86_64 + arm64, windows x86_64. Grab
+one from
+[the releases page](https://github.com/Cobrust-lang/cobrust-studio/releases/latest)
+and skip the `cargo build` step.
 
 ---
 
@@ -99,10 +102,31 @@ Use the `/login` page to configure your LLM endpoint. Fill in:
 - **Model** (e.g. `claude-opus-4-7`)
 - **Passphrase** — used to encrypt the key before disk storage (never stored itself)
 
-Studio derives an AES-256 key from your passphrase via Argon2id (~500 ms intentionally
-slow to resist brute force) and seals your credentials with AES-256-GCM. The encrypted
+Studio derives an AES-256 key from your passphrase via Argon2id (intentionally slow
+to resist brute force) and seals your credentials with AES-256-GCM. The encrypted
 blob stays in SQLite; the derived key lives only in server memory. On process restart,
 re-entering the passphrase re-derives the key — your API key stays encrypted at rest.
+
+**Measured Argon2id wall-clock** (release-mode build, `m=64 MiB / t=3 / p=1`):
+- Apple M4 (2024 MacBook): **~70 ms** (N=5, median)
+- GitHub Actions Linux runner (2 vCPU shared, x86_64): ~300-400 ms estimated
+- Old laptop (2018-era Intel i5): ~500-800 ms estimated
+
+Hard ceiling is 2 s (`secret::tests::bench_argon2id_derive` enforces). If your
+hardware exceeds that, file a finding — the m_cost parameter may need tuning.
+Re-run the bench yourself with:
+```
+cargo test --release -p studio-server --lib -- --ignored --nocapture bench_argon2id_derive
+```
+
+**Rotating your passphrase**: delete the SQLite session_kv row and re-login. Today
+there's no `POST /api/change-passphrase` route — that's an ADR-pending v0.3.x
+enhancement. Procedure for now:
+```bash
+# while the server is stopped:
+sqlite3 .cobrust-studio/studio.db "DELETE FROM session_kv WHERE key = 'endpoint';"
+# then start the server and visit /login with the new passphrase
+```
 
 See `docs/human/en/secret-storage.md` for the full security model.
 
@@ -123,6 +147,21 @@ This bypasses `/login` and injects credentials at boot. Also available via env v
 
 The studio.toml `api_key_env` field (e.g. `ANTHROPIC_API_KEY`) also remains supported
 for backward compatibility and for the studio.toml router path.
+
+### Three credential paths — security hierarchy
+
+Studio supports three ways to provide a credential, in **descending order of at-
+rest security**:
+
+| Path | At-rest encryption | Recommended for |
+|---|---|---|
+| `/login` (POST `/api/login` from browser or curl) | ✅ AES-256-GCM + Argon2id | **Default. Production / pilot use.** |
+| `--dev-api-key` CLI flag + `COBRUST_DEV_*` env | ❌ plaintext in process memory + shell history | CI fixtures, Playwright, hermetic e2e |
+| `studio.toml api_key_env = "ANTHROPIC_API_KEY"` + env var | ❌ plaintext on disk in `studio.toml` (the var name) + plaintext in env | Legacy / pre-M6 deployments (deprecated; v0.3.x will require migration) |
+
+The first two work today and are documented. The third fires a `tracing::warn!`
+at startup when detected — it's kept for backward compat but slated for removal.
+Pick `/login` unless you have a specific reason not to.
 
 ---
 

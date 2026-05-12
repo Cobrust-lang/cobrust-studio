@@ -87,8 +87,62 @@ cobrust-studio serve --project /path/to/project
 
 ---
 
+## Performance — Argon2id wall-clock
+
+Argon2id is intentionally slow. The interactive-login latency is set by
+the `m_cost / t_cost / p_cost` parameters in
+`crates/studio-server/src/secret.rs::SessionKey::derive`. Current values
+(`-v1` scheme): `m=64 MiB, t=3, p=1, out=32 B`.
+
+Measured (release-mode build):
+
+| Hardware | Median wall-clock (N=5) |
+|---|---|
+| Apple M4 (2024 MacBook) | **70 ms** |
+| Apple M2 (estimated) | ~120 ms |
+| GitHub Actions ubuntu-latest runner (2 vCPU shared) | ~300-400 ms estimated |
+| Old laptop (2018-era Intel i5) | ~500-800 ms estimated |
+
+Hard ceiling is 2 seconds, enforced by `secret::tests::bench_argon2id_derive`
+in release mode. If your hardware exceeds that, file a finding —
+`m_cost` may need tuning down for that target class. Run the bench:
+
+```bash
+cargo test --release -p studio-server --lib -- --ignored --nocapture bench_argon2id_derive
+```
+
+Future parameter revisions bump the scheme tag to `-v2`, `-v3`, etc.
+Old blobs remain readable because the scheme tag is the version pin
+(see ADR-0007 §"Storage wire format").
+
+---
+
+## Rotating your passphrase
+
+There is **no `POST /api/change-passphrase` route in v0.2.x** — that's
+slated as an ADR-pending v0.3.x enhancement. Until then, the procedure
+is:
+
+1. Stop the server.
+2. Delete the session_kv row that holds the encrypted blob:
+   ```bash
+   sqlite3 .cobrust-studio/studio.db "DELETE FROM session_kv WHERE key = 'endpoint';"
+   ```
+3. Start the server.
+4. Visit `/login` and submit the new passphrase + your endpoint / API
+   key / model. Studio seals a fresh blob.
+
+This forgets the old encrypted blob entirely. There's no
+"verify-old-then-rotate" flow yet — the deletion approach is the only
+path that doesn't require knowing the old passphrase, which matters
+for the "I forgot my passphrase" case.
+
+---
+
 ## Related Documents
 
 - ADR-0007: Secret storage AEAD round-trip design decision
+- ADR-0008: Multi-provider /login (v0.3.x, Phase 2 pending)
 - ADR-0003: Auth model (custom-endpoint-first)
 - `crates/studio-server/src/secret.rs`: Implementation
+- `crates/studio-server/src/routes/login.rs`: Route handlers

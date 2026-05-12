@@ -380,6 +380,70 @@ mod tests {
     }
 
     /// Verify that a too-short blob returns `SecretError::Malformed`.
+    /// Argon2id wall-clock benchmark — Sarah v3 audit "low-end laptop ≤
+    /// 2s" gate. Ignored by default (timing-dependent + slow on emulated
+    /// targets). Run explicitly with:
+    ///
+    ///   cargo test -p studio-server --release secret::tests::bench_argon2id_derive -- --ignored --nocapture
+    ///
+    /// Records the wall-clock of N=5 sequential derives (same params as
+    /// production: m=64MiB, t=3, p=1, output=32B). Asserts the **median**
+    /// stays under the ADR-0007 §"Performance" tolerance (≤ 2 seconds —
+    /// the upper bound at which interactive login UX starts feeling
+    /// stuck). ADR-0007 §"Done means" item 6 anchored ~500ms on a
+    /// 2020-era laptop; the 2s ceiling gives headroom for CI runners +
+    /// older Intel hardware.
+    ///
+    /// **Caveat**: in `#[cfg(test)]` (debug profile) Argon2id is 3-5×
+    /// slower than `--release`. The 2s ceiling applies to release-mode
+    /// runs; debug runs may exceed it without indicating a real
+    /// regression. The `--release` flag in the invocation above is
+    /// mandatory for this gate.
+    #[ignore = "release-mode timing benchmark; run explicitly with --ignored --nocapture"]
+    #[test]
+    fn bench_argon2id_derive() {
+        use std::time::Instant;
+
+        let passphrase = "bench-test-passphrase-2026";
+        let salt = [0xA5u8; 16];
+        const N: usize = 5;
+
+        // Warm-up — JIT + page-fault cost shouldn't dominate the first
+        // measurement.
+        let _warmup = SessionKey::derive(passphrase, &salt).unwrap();
+
+        let mut samples_ms: Vec<u128> = Vec::with_capacity(N);
+        for i in 0..N {
+            let t0 = Instant::now();
+            let _k = SessionKey::derive(passphrase, &salt).unwrap();
+            let elapsed = t0.elapsed();
+            let ms = elapsed.as_millis();
+            samples_ms.push(ms);
+            println!("  sample {}: {} ms", i + 1, ms);
+        }
+
+        samples_ms.sort_unstable();
+        let median_ms = samples_ms[N / 2];
+        let min_ms = samples_ms[0];
+        let max_ms = samples_ms[N - 1];
+
+        println!(
+            "\nArgon2id derive (m=64MiB, t=3, p=1, out=32B) — N={N}:\n  \
+             min={min_ms} ms  median={median_ms} ms  max={max_ms} ms"
+        );
+
+        // Hard ceiling — ADR-0007 + Sarah v3 v0.3.x gate. Release mode.
+        // Debug mode may legitimately exceed this; the #[ignore] gate
+        // is the discipline boundary.
+        const CEILING_MS: u128 = 2_000;
+        assert!(
+            median_ms <= CEILING_MS,
+            "Argon2id derive median {median_ms} ms exceeds {CEILING_MS} ms ceiling \
+             (ADR-0007 §Performance; Sarah v3 v0.3.x pilot gate). Re-tune \
+             m_cost / t_cost / p_cost in `SessionKey::derive` if persistent.",
+        );
+    }
+
     #[test]
     fn malformed_blob_too_short() {
         let salt = [0x55u8; 16];

@@ -87,8 +87,58 @@ cobrust-studio serve --project /path/to/project
 
 ---
 
+## 性能 — Argon2id 实测耗时
+
+Argon2id 故意慢,交互登录延迟由
+`crates/studio-server/src/secret.rs::SessionKey::derive` 里的
+`m_cost / t_cost / p_cost` 参数决定。当前值(`-v1` scheme):
+`m=64 MiB, t=3, p=1, out=32 B`。
+
+实测(release 构建):
+
+| 硬件 | N=5 中位耗时 |
+|---|---|
+| Apple M4 (2024 MacBook) | **70 ms** |
+| Apple M2 (估算) | ~120 ms |
+| GitHub Actions ubuntu-latest runner (2 vCPU 共享) | ~300-400 ms 估算 |
+| 老笔记本 (2018 时代 Intel i5) | ~500-800 ms 估算 |
+
+硬上限 2 秒,由 `secret::tests::bench_argon2id_derive` 在 release 模式
+下强制。如果你的硬件超时,提个 finding —— `m_cost` 可能需要针对该类型
+target 调低。自己跑 bench:
+
+```bash
+cargo test --release -p studio-server --lib -- --ignored --nocapture bench_argon2id_derive
+```
+
+未来 AEAD 参数修订会把 scheme tag 升到 `-v2`、`-v3` 等。旧 blob 仍然
+可读,因为 scheme tag 就是版本锚(见 ADR-0007 §"Storage wire format")。
+
+---
+
+## 轮换 passphrase
+
+**v0.2.x 没有 `POST /api/change-passphrase` 路由** —— 这是计划中的
+v0.3.x ADR 项目。在那之前,轮换 passphrase 的步骤是:
+
+1. 停止 server。
+2. 删除 session_kv 表里存加密 blob 的行:
+   ```bash
+   sqlite3 .cobrust-studio/studio.db "DELETE FROM session_kv WHERE key = 'endpoint';"
+   ```
+3. 启动 server。
+4. 访问 `/login` 提交新的 passphrase + endpoint / API key / model。Studio 会用新 passphrase seal 一个新 blob。
+
+这种做法完全忘记旧的加密 blob。还没有"先验证旧密码再轮换"的流程 —— 
+直接删除是唯一不需要旧 passphrase 的路径,这对"我忘记 passphrase 了"
+的场景很重要。
+
+---
+
 ## 相关文档
 
-- ADR-0007：密钥存储 AEAD 轮次设计决策
-- ADR-0003：认证模型（自定义端点优先）
-- `crates/studio-server/src/secret.rs`：实现代码
+- ADR-0007:密钥存储 AEAD 轮次设计决策
+- ADR-0008:多 provider /login (v0.3.x,Phase 2 待实现)
+- ADR-0003:认证模型(自定义端点优先)
+- `crates/studio-server/src/secret.rs`:实现代码
+- `crates/studio-server/src/routes/login.rs`:路由处理
