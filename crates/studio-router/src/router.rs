@@ -268,6 +268,31 @@ impl Router {
         self.dispatch_ordered(tag, &req, &order).await
     }
 
+    /// Dispatch one request with a caller-supplied `task_tag` that is
+    /// persisted into each ledger entry written during this dispatch.
+    ///
+    /// Identical semantics to [`Self::dispatch`] otherwise — same cache,
+    /// strategy, retry, and provider-fallthrough behaviour. Wave A5
+    /// reconcile added this overload so `studio-server`'s
+    /// `POST /api/dispatch` can thread `DispatchContext::task_tag`
+    /// (ADR-0006 §F-03) into the ledger without going through the
+    /// `CompletionRequest` body (which is keyed by the cache and so
+    /// cannot carry mutable metadata).
+    ///
+    /// # Errors
+    /// See [`RouterError`] variants.
+    pub async fn dispatch_with_tag(
+        &self,
+        task_tag: Option<String>,
+        req: CompletionRequest,
+    ) -> Result<DispatchResponse, RouterError> {
+        if self.preferred.is_empty() {
+            return Err(RouterError::NoProvider);
+        }
+        let order = self.order_preferred().await;
+        self.dispatch_ordered(task_tag, &req, &order).await
+    }
+
     async fn order_preferred(&self) -> Vec<ProviderModel> {
         match self.strategy {
             Strategy::Latency => {

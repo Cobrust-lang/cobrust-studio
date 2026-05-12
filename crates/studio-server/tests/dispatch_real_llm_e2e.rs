@@ -75,8 +75,7 @@ fn provider_kind_from_env() -> ProviderKind {
     match std::env::var("STUDIO_E2E_PROVIDER_KIND")
         .ok()
         .as_deref()
-        .map(str::trim)
-        .unwrap_or("openai")
+        .map_or("openai", str::trim)
     {
         "anthropic" => ProviderKind::Anthropic,
         // Default + `openai` fall through to the OpenAI-compatible shape.

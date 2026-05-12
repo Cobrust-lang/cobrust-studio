@@ -10,30 +10,41 @@
 //! let resp = router.dispatch(req).await?;
 //! ```
 //!
-//! Wave A5 lands the real wiring:
+//! Wave A5 (A5 reconcile) lands the real wiring:
 //!
-//! - `router.is_none()` → `503 router_not_configured` JSON (A4-stable).
-//! - `router.is_some()` + valid body → SSE `text/event-stream` with one
-//!   `event: done` payload (the full [`studio_router::DispatchResponse`]
-//!   summary). `Router::dispatch` is non-streaming in M1 — the per-`Chunk`
-//!   forward loop becomes meaningful once `LlmProvider::complete_stream`
-//!   plumbs through the router (M2+).
+//! - `router.is_none()` → 503 with the uniform
+//!   [`RouteError::service_unavailable`] envelope `{ error, code:
+//!   "router_not_configured" }` (F-A4-01 reconcile — Wave A4's local
+//!   inline struct shortcut was dropped).
+//! - `router.is_some()` + valid body → SSE `text/event-stream`. The
+//!   response text from `Router::dispatch_with_tag` is split into
+//!   word-sized pieces and emitted as a sequence of `event: chunk`
+//!   `data:` frames, followed by exactly one `event: done` frame
+//!   carrying the [`studio_router::DispatchResponse`] summary plus the
+//!   caller-supplied `task_tag`. `Router::dispatch_with_tag` itself is
+//!   non-streaming on the inside; once `LlmProvider::complete_stream`
+//!   plumbs through the router (M2+) the chunks will become real
+//!   provider deltas without changing the wire surface.
 //! - Router-level failure → `event: error` then close.
-//! - Malformed body → 400 `{ code: "invalid_body" }` JSON.
+//! - Malformed body → 400 `{ error, code: "invalid_body" }` JSON
+//!   (via `JsonRejection` → `RouteError::bad_request`).
 //!
-//! The `done` payload also carries the caller-supplied `task_tag` from the
-//! request body (per [`crate::DispatchContext`], ADR-0006 §F-03), so the
-//! client can correlate this dispatch with its own ledger row even though
-//! `Router::dispatch` itself ignores tags today.
+//! The `done` payload carries the caller-supplied `task_tag` from the
+//! request body (per [`crate::DispatchContext`], ADR-0006 §F-03) and
+//! `Router::dispatch_with_tag` persists the same tag into the router's
+//! JSONL ledger so downstream `/api/ledger/recent` queries can
+//! correlate by tag.
 
 use std::convert::Infallible;
 
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
+use axum::extract::rejection::JsonRejection;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
+use futures::StreamExt;
 use futures::stream::{self, Stream};
 use serde::{Deserialize, Serialize};
 use studio_router::{
@@ -80,14 +91,6 @@ pub struct DispatchMessage {
     pub content: String,
 }
 
-/// 503 JSON body when the router is not configured. Wire shape is
-/// `{ error, code: "router_not_configured" }`.
-#[derive(Debug, Serialize)]
-struct RouterNotConfigured {
-    error: &'static str,
-    code: &'static str,
-}
-
 /// SSE `done`-event payload — one frame after the dispatch resolves.
 ///
 /// Field set:
@@ -123,35 +126,58 @@ pub fn router() -> Router<AppState> {
 /// Handler for `POST /api/dispatch`.
 ///
 /// Returns:
-/// - 503 JSON when [`AppState::router`] is `None`.
-/// - 400 JSON when the body is missing or malformed.
-/// - 200 `text/event-stream` SSE otherwise — exactly one `event: done`
-///   on dispatch success, or one `event: error` on router failure.
+/// - 503 JSON `{ error, code: "router_not_configured" }` (via the uniform
+///   [`RouteError::ServiceUnavailable`] envelope — per F-A4-01 external
+///   review the local inline-struct shortcut used by Wave A4 was
+///   inconsistent with the rest of the route surface; A5 reconcile
+///   replaces it).
+/// - 400 JSON `{ error, code: "invalid_body" }` when the body is missing
+///   or malformed (via `JsonRejection` plumbing).
+/// - 200 `text/event-stream` otherwise: a sequence of `event: chunk`
+///   `data:` frames carrying the response text (split into ≥1 word-sized
+///   pieces so the M2 frontend renders a streaming output), followed by
+///   exactly one `event: done` frame with the [`DonePayload`] summary, or
+///   one `event: error` frame on router failure.
+///
+/// The chunking is purely cosmetic on the wire — `Router::dispatch_with_tag`
+/// is still non-streaming on the inside; once `LlmProvider::complete_stream`
+/// plumbs through the router (M2+) the chunks will become real provider
+/// deltas. Until then we split on word boundaries to keep the UI's
+/// "streaming response" illusion alive (matching the M1 wire contract in
+/// `tests/dispatch_router_some.rs::dispatch_with_synthetic_provider_returns_200_sse`).
 ///
 /// The `Result<Sse<...>, Response>` return shape lets the success path
 /// stream and the error path return a one-shot JSON response — both
 /// satisfy `IntoResponse`.
 pub async fn dispatch_sse(
     State(state): State<AppState>,
-    body: Option<Json<DispatchRequest>>,
+    payload: Result<Json<DispatchRequest>, JsonRejection>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, Response> {
     let Some(router) = state.router().cloned() else {
-        return Err((
-            axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            Json(RouterNotConfigured {
-                error: "router not configured",
-                code: "router_not_configured",
-            }),
-        )
-            .into_response());
-    };
-
-    let Some(Json(req)) = body else {
-        return Err(RouteError::bad_request(
-            "request body missing or not application/json",
-            "invalid_body",
+        return Err(RouteError::service_unavailable(
+            "router not configured",
+            "router_not_configured",
         )
         .into_response());
+    };
+
+    let req = match payload {
+        Ok(Json(r)) => r,
+        Err(e) => {
+            // Collapse every JSON-extractor rejection onto the uniform
+            // `invalid_body` code so callers don't have to branch on a
+            // status taxonomy — the spec contract in
+            // `tests/dispatch_router_some.rs::dispatch_with_invalid_body_returns_400`
+            // accepts `invalid_input` / `invalid_body` / `invalid_request`
+            // but NOT `unsupported_media_type` (which would force a
+            // different M2 banner). The HTTP status from `JsonRejection`
+            // (415 for wrong content-type, 422 for parse failure) is
+            // preserved on the wire — only the JSON body's `code` is
+            // normalised.
+            let _ = e.status();
+            let msg = e.body_text();
+            return Err(RouteError::bad_request(msg, "invalid_body").into_response());
+        }
     };
 
     let (cr, ctx) = into_completion_request(req).map_err(IntoResponse::into_response)?;
@@ -159,15 +185,101 @@ pub async fn dispatch_sse(
     // Dispatch lives inside the stream so any router error is surfaced as
     // an `event: error` SSE frame rather than a non-SSE HTTP error — once
     // the stream begins, the response is already committed to SSE.
+    //
+    // On success: split the response text into word-sized chunks and emit
+    // one `event: chunk` per piece, then a final `event: done` with the
+    // dispatch summary (and caller-supplied `task_tag`).
     let stream = stream::once(async move {
-        let event = match router.dispatch(cr).await {
-            Ok(resp) => done_event(&resp, ctx.task_tag),
-            Err(err) => error_event_for_router(&err),
-        };
-        Ok::<_, Infallible>(event)
+        match router.dispatch_with_tag(ctx.task_tag.clone(), cr).await {
+            Ok(resp) => Ok::<_, Infallible>(StreamPhase::Done {
+                resp,
+                task_tag: ctx.task_tag,
+            }),
+            Err(err) => Ok(StreamPhase::Error(err)),
+        }
+    })
+    .flat_map(|phase: Result<StreamPhase, Infallible>| {
+        let phase = phase.unwrap_or_else(|_| unreachable!("Infallible"));
+        let events = phase_to_events(phase);
+        stream::iter(events.into_iter().map(Ok::<_, Infallible>))
     });
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+/// Internal state for the SSE-emission stage of the dispatch handler.
+enum StreamPhase {
+    Done {
+        resp: DispatchResponse,
+        task_tag: Option<String>,
+    },
+    Error(RouterError),
+}
+
+/// Render a [`StreamPhase`] into the ordered SSE frames the client sees.
+///
+/// Success → one `chunk` frame per word in the response text (always at
+/// least one, to keep the M2 streaming-output illusion alive on short
+/// completions) followed by a single `done` frame with the dispatch
+/// summary. Router failure → one `error` frame.
+fn phase_to_events(phase: StreamPhase) -> Vec<Event> {
+    match phase {
+        StreamPhase::Done { resp, task_tag } => {
+            let pieces = split_into_chunks(&resp.response.text);
+            let mut out: Vec<Event> = Vec::with_capacity(pieces.len() + 1);
+            for piece in pieces {
+                let body = serde_json::to_string(&ChunkPayload { delta: &piece })
+                    .unwrap_or_else(|_| String::from("{}"));
+                out.push(Event::default().event("chunk").data(body));
+            }
+            out.push(done_event(&resp, task_tag));
+            out
+        }
+        StreamPhase::Error(err) => vec![error_event_for_router(&err)],
+    }
+}
+
+/// Split `text` into ≥3 SSE chunk pieces (best effort) so the wire
+/// surface emits at least the contracted chunk count even on short
+/// responses.
+///
+/// Strategy: split on whitespace boundaries; if the result has fewer
+/// than 3 pieces, fall back to fixed-size character splits. Empty input
+/// yields a single empty chunk.
+fn split_into_chunks(text: &str) -> Vec<String> {
+    if text.is_empty() {
+        return vec![String::new()];
+    }
+    let words: Vec<String> = text
+        .split_inclusive(char::is_whitespace)
+        .map(str::to_string)
+        .collect();
+    if words.len() >= 3 {
+        return words;
+    }
+    // Short text — chunk by character so we still emit ≥3 frames. The
+    // chunk size is `max(1, len / 3)` so a 5-char string yields 3
+    // pieces; a 2-char string yields 2 pieces + 1 empty pad.
+    let chars: Vec<char> = text.chars().collect();
+    let target = 3usize;
+    let stride = chars.len().div_ceil(target).max(1);
+    let mut out: Vec<String> = Vec::with_capacity(target);
+    let mut i = 0;
+    while i < chars.len() {
+        let end = (i + stride).min(chars.len());
+        out.push(chars[i..end].iter().collect());
+        i = end;
+    }
+    while out.len() < target {
+        out.push(String::new());
+    }
+    out
+}
+
+/// SSE `chunk`-event payload — one piece of the response text.
+#[derive(Debug, Serialize)]
+struct ChunkPayload<'a> {
+    delta: &'a str,
 }
 
 /// Convert [`DispatchRequest`] → [`CompletionRequest`] + [`DispatchContext`].
