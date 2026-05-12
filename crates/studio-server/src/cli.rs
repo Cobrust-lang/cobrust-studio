@@ -29,6 +29,8 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use studio_router::ProviderKind;
 
+use crate::persist::PersistBackend;
+
 /// Top-level CLI. Each subcommand is mutually exclusive.
 #[derive(Parser, Debug)]
 #[command(
@@ -131,6 +133,48 @@ pub struct ServeArgs {
         env = "COBRUST_DEV_PROVIDER_KIND"
     )]
     pub dev_provider_kind: ProviderKind,
+
+    // --- M8 persistent session (ADR-0009) -----------------------------------
+    /// Persistent-session backend. When set to `keychain` or `file`, the
+    /// passphrase is wrapped at login time so the server auto-unlocks
+    /// the in-memory `SessionKey` on the next boot — closes the "re-enter
+    /// passphrase on every restart" friction for systemd / Docker / long-
+    /// lived server deployments.
+    ///
+    /// Accepted values:
+    /// - `none` (default) — v0.3.0 baseline; in-memory SessionKey drops
+    ///   on restart, user re-enters passphrase via /login.
+    /// - `keychain` — OS keychain (macOS Keychain / freedesktop secret-
+    ///   service / Windows Credential Manager via DPAPI). Strongest
+    ///   at-rest posture for cold-disk-theft.
+    /// - `file` — `0600` mode plaintext file at the path supplied via
+    ///   `--persist-session-file`. Fallback for environments without
+    ///   a keychain (Docker, headless Linux without D-Bus). Same trust
+    ///   model as `--dev-api-key` (operator-bounded; sysadmin/OS-user-
+    ///   equivalent attacker still wins).
+    ///
+    /// See ADR-0009 §"Threat model (M8 additions)" + `docs/human/{zh,en}/
+    /// secret-storage.md` §"Persistent session backends" for the
+    /// security-vs-friction trade-off table.
+    #[arg(
+        long,
+        value_name = "MODE",
+        default_value = "none",
+        value_parser = parse_persist_mode,
+        env = "COBRUST_PERSIST_SESSION"
+    )]
+    pub persist_session: PersistBackend,
+
+    /// File path for `--persist-session=file`. REQUIRED when the mode
+    /// is `file`; ignored otherwise (validated at boot — boot fails fast
+    /// if mode=file and the path is absent).
+    ///
+    /// Recommended: `/etc/cobrust-studio/passphrase` for a system-wide
+    /// deployment, or `~/.config/cobrust-studio/passphrase` for a per-
+    /// user run. The file is created (mode `0600` on Unix) on first
+    /// `/api/login`; parent directories are created as needed.
+    #[arg(long, value_name = "PATH", env = "COBRUST_PERSIST_SESSION_FILE")]
+    pub persist_session_file: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for ServeArgs {
@@ -150,6 +194,8 @@ impl std::fmt::Debug for ServeArgs {
             .field("dev_model", &self.dev_model)
             .field("debug_session", &self.debug_session)
             .field("dev_provider_kind", &self.dev_provider_kind)
+            .field("persist_session", &self.persist_session)
+            .field("persist_session_file", &self.persist_session_file)
             .finish()
     }
 }
@@ -163,5 +209,76 @@ fn parse_dev_provider_kind(s: &str) -> Result<ProviderKind, String> {
         other => Err(format!(
             "unknown provider kind {other:?}; expected one of: anthropic, openai, synthetic"
         )),
+    }
+}
+
+/// Parse `--persist-session` string to [`PersistBackend`].
+///
+/// Case-insensitive + whitespace-trim for ergonomic operator usage
+/// (`--persist-session=Keychain` and `--persist-session=" file "` both
+/// work). Unknown values produce a clap-rendered error listing the
+/// three accepted modes.
+///
+/// Used by both the CLI parser and the `COBRUST_PERSIST_SESSION` env
+/// var path (clap routes both through the same `value_parser`).
+fn parse_persist_mode(s: &str) -> Result<PersistBackend, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "none" => Ok(PersistBackend::None),
+        "keychain" => Ok(PersistBackend::Keychain),
+        "file" => Ok(PersistBackend::File),
+        other => Err(format!(
+            "unknown persist mode {other:?}; expected one of: none, keychain, file"
+        )),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_persist_mode_accepts_three_canonical_values() {
+        assert_eq!(parse_persist_mode("none").unwrap(), PersistBackend::None);
+        assert_eq!(
+            parse_persist_mode("keychain").unwrap(),
+            PersistBackend::Keychain
+        );
+        assert_eq!(parse_persist_mode("file").unwrap(), PersistBackend::File);
+    }
+
+    #[test]
+    fn parse_persist_mode_is_case_insensitive() {
+        assert_eq!(parse_persist_mode("NONE").unwrap(), PersistBackend::None);
+        assert_eq!(
+            parse_persist_mode("KeyChain").unwrap(),
+            PersistBackend::Keychain
+        );
+        assert_eq!(parse_persist_mode("File").unwrap(), PersistBackend::File);
+    }
+
+    #[test]
+    fn parse_persist_mode_trims_whitespace() {
+        assert_eq!(
+            parse_persist_mode("  keychain  ").unwrap(),
+            PersistBackend::Keychain
+        );
+        assert_eq!(
+            parse_persist_mode("\tfile\n").unwrap(),
+            PersistBackend::File
+        );
+    }
+
+    #[test]
+    fn parse_persist_mode_rejects_unknown() {
+        let err = parse_persist_mode("tpm").unwrap_err();
+        assert!(err.contains("unknown persist mode"), "err={err}");
+        assert!(err.contains("none, keychain, file"), "err={err}");
+    }
+
+    #[test]
+    fn parse_persist_mode_rejects_empty() {
+        let err = parse_persist_mode("").unwrap_err();
+        assert!(err.contains("unknown persist mode"), "err={err}");
     }
 }
