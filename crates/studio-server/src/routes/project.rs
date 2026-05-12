@@ -14,10 +14,10 @@
 //! ```
 
 use axum::Json;
+use axum::Router;
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
 use serde::Serialize;
 use time::format_description::well_known::Rfc3339;
 

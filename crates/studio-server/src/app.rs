@@ -47,6 +47,7 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/api/auth", routes::auth::router())
         .nest("/api/ledger", routes::ledger::router())
         .nest("/api/events", routes::events::router())
+        .nest("/api/dispatch", routes::dispatch::router())
         .fallback(not_found)
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
