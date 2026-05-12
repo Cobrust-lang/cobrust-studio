@@ -41,3 +41,8 @@ axum.workspace = true
 tower.workspace = true
 http = "1"
 http-body-util = "0.1"
+# A4 TEST corpus: SSE body chunk reading + base64 round-trip in auth tests.
+# `studio-router` / `studio-store` are inherited from `[dependencies]` and
+# remain in scope for integration tests without a dev-dep re-listing.
+futures.workspace = true
+base64 = "0.22"
