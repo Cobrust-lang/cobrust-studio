@@ -1,18 +1,26 @@
 /**
- * /login — endpoint configuration flow (Wave M3 hermetic).
+ * /login — endpoint configuration flow (Wave M6 hermetic).
  *
- * Runs against the live `cobrust-studio` spawned by `_setup.ts` (the
- * M3 hermetic harness). No manual backend setup required; the binary
- * embeds the SvelteKit SPA so the page navigations resolve same-origin.
+ * Runs against the live `cobrust-studio` spawned by `_setup.ts`. No
+ * manual backend setup required; the binary embeds the SvelteKit SPA
+ * so the page navigations resolve same-origin.
  *
- * Pinned UX contract:
- * 1. Three inputs (Base URL / API key / Model) and a "Save endpoint"
- *    button. OAuth tab is disabled.
- * 2. Empty submit shows the toast "all fields required".
- * 3. Valid submit calls `POST /api/auth/set-endpoint` with the
- *    `EncryptedBlob` triple and redirects to `/adr` after the
- *    400ms success toast.
- * 4. Server failure surfaces the `{code}: {message}` toast verbatim.
+ * Pinned UX contract (ADR-0007 M6 AEAD round-trip):
+ * 1. Four inputs (Base URL / API key / Model / Passphrase) and an
+ *    "Unlock session" button. OAuth tab is disabled.
+ * 2. Empty submit shows the toast "all fields required (including
+ *    passphrase)".
+ * 3. Passphrase < 8 chars shows the toast "passphrase must be ≥ 8
+ *    characters".
+ * 4. Valid submit POSTs `{endpoint, api_key, model, passphrase}`
+ *    plaintext JSON to `/api/login`. On success the server derives
+ *    the AEAD key in-process, the toast reads "session unlocked",
+ *    and the page redirects to `/adr` after 400 ms.
+ *
+ * Plaintext-over-TLS is the contract — the server runs Argon2id
+ * server-side (per ADR-0007 Option B) rather than client-side
+ * WebCrypto. The old M2 `setEndpoint` client-side stub still exists
+ * under `$lib/crypto.ts` but is no longer in the live UX path.
  */
 import { skipIfHarnessDisabled, test, expect } from './_fixtures';
 
@@ -22,31 +30,45 @@ test('login form validates required fields before POSTing', async ({ page }) => 
 	await page.goto('/login');
 	await expect(page.getByText('Cobrust Studio')).toBeVisible();
 
-	// Submit with blank fields — the form short-circuits client-side.
+	// Submit with all fields blank — the form short-circuits client-side.
 	await page.getByPlaceholder('sk-…').fill('');
-	await page.getByRole('button', { name: /save endpoint/i }).click();
-	await expect(page.getByText('all fields required')).toBeVisible();
+	await page.getByRole('button', { name: /unlock session/i }).click();
+	await expect(page.getByText(/all fields required/i)).toBeVisible();
 });
 
-test('successful endpoint save redirects to /adr', async ({ page }) => {
+test('login form rejects passphrases shorter than 8 chars', async ({ page }) => {
 	await page.goto('/login');
 	await page.getByPlaceholder('https://api.anthropic.com').fill('https://api.anthropic.com');
 	await page.getByPlaceholder('sk-…').fill('sk-test-fixture-key');
 	await page.getByPlaceholder('claude-opus-4-7').fill('claude-opus-4-7');
+	await page.getByPlaceholder(/used to derive/i).fill('short');
+	await page.getByRole('button', { name: /unlock session/i }).click();
+	await expect(page.getByText(/must be ≥ 8 characters/i)).toBeVisible();
+});
 
-	// Capture the request body so we pin the `EncryptedBlob` triple.
+test('successful login posts plaintext to /api/login and redirects to /adr', async ({ page }) => {
+	await page.goto('/login');
+	await page.getByPlaceholder('https://api.anthropic.com').fill('https://api.anthropic.com');
+	await page.getByPlaceholder('sk-…').fill('sk-test-fixture-key');
+	await page.getByPlaceholder('claude-opus-4-7').fill('claude-opus-4-7');
+	await page.getByPlaceholder(/used to derive/i).fill('correct-horse-battery-staple');
+
+	// Capture the request body — pin the (endpoint, api_key, model,
+	// passphrase) plaintext shape (ADR-0007 §"API surface change").
 	const postPromise = page.waitForRequest(
-		(req) => req.url().endsWith('/api/auth/set-endpoint') && req.method() === 'POST'
+		(req) => req.url().endsWith('/api/login') && req.method() === 'POST'
 	);
-	await page.getByRole('button', { name: /save endpoint/i }).click();
+	await page.getByRole('button', { name: /unlock session/i }).click();
 	const req = await postPromise;
 	const body = req.postDataJSON() as Record<string, unknown>;
-	expect(typeof body.ciphertext).toBe('string');
-	expect(typeof body.nonce).toBe('string');
-	expect(body.scheme).toBe('aes-gcm-256/m2-stub');
+	expect(body.endpoint).toBe('https://api.anthropic.com');
+	expect(body.api_key).toBe('sk-test-fixture-key');
+	expect(body.model).toBe('claude-opus-4-7');
+	expect(typeof body.passphrase).toBe('string');
+	expect((body.passphrase as string).length).toBeGreaterThanOrEqual(8);
 
-	// Server returns 200 → toast "endpoint stored" → goto /adr after 400ms.
-	await expect(page.getByText(/endpoint stored/i)).toBeVisible({ timeout: 2_000 });
+	// Server returns 200 → toast "session unlocked" → goto /adr after 400ms.
+	await expect(page.getByText(/session unlocked/i)).toBeVisible({ timeout: 2_000 });
 	await expect(page).toHaveURL(/\/adr$/, { timeout: 3_000 });
 });
 

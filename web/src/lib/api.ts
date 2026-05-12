@@ -123,10 +123,38 @@ export async function getVersion(): Promise<VersionInfo> {
 	return jsonGet<VersionInfo>('/api/version');
 }
 
-// ───── Auth (ADR-0003) ─────────────────────────────────────────────
+// ───── Auth (ADR-0003 / ADR-0007 M6) ───────────────────────────────
 
+/**
+ * Legacy M2 stub: client-side AES-GCM blob POSTed to the server.
+ * Kept exported for the crypto.test.ts test corpus + as a fallback;
+ * the live /login page uses `login()` (ADR-0007 server-side AEAD).
+ */
 export async function setEndpoint(blob: EncryptedBlob): Promise<{ status: string }> {
 	return jsonPost<EncryptedBlob, { status: string }>('/api/auth/set-endpoint', blob);
+}
+
+/**
+ * M6 login (ADR-0007). Server derives an Argon2id key from `passphrase`,
+ * AEAD-seals `(endpoint, api_key, model)` with AES-256-GCM, and stashes
+ * the in-memory `SessionKey` for the run. The plaintext payload travels
+ * over TLS/localhost; the server never persists it.
+ */
+export async function login(payload: {
+	endpoint: string;
+	api_key: string;
+	model: string;
+	passphrase: string;
+}): Promise<{ status: string }> {
+	return jsonPost<typeof payload, { status: string }>('/api/login', payload);
+}
+
+export async function logout(): Promise<{ status: string }> {
+	return jsonPost<Record<string, never>, { status: string }>('/api/logout', {});
+}
+
+export async function getSessionStatus(): Promise<{ authenticated: boolean }> {
+	return jsonGet<{ authenticated: boolean }>('/api/session/status');
 }
 
 // ───── Dispatch (SSE) ──────────────────────────────────────────────

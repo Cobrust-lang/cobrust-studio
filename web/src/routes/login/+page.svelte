@@ -1,41 +1,48 @@
 <!--
-	/login — custom endpoint + API key per ADR-0003.
+	/login — custom endpoint + API key per ADR-0003 + ADR-0007 M6.
 
-	Two tabs visually: "API key" (active, drives the M2 flow) and "OAuth"
-	(greyed out with a "Coming v0.5.0" placeholder; clicking does
-	nothing). The API key is client-side AES-GCM-encrypted via the M2
-	stub in `$lib/crypto.ts` before POSTing to `/api/auth/set-endpoint`.
+	Two tabs visually: "API key" (active, drives the flow) and "OAuth"
+	(greyed out with a "Coming v0.5.0" placeholder). The form POSTs
+	`{endpoint, api_key, model, passphrase}` plaintext over TLS/localhost
+	to `/api/login`; the server runs Argon2id(passphrase) → 32-byte key,
+	AES-256-GCM-seals the credentials, persists the blob in session_kv,
+	and holds the derived `SessionKey` in memory for the binary lifetime
+	(per ADR-0007). On binary restart the passphrase must be re-entered.
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import Button from '$lib/components/Button.svelte';
-	import { setEndpoint, ApiError } from '$lib/api';
-	import { encryptEndpointBlob } from '$lib/crypto';
+	import { login, ApiError } from '$lib/api';
 	import { cn } from '$lib/util';
 
 	let tab = $state<'api' | 'oauth'>('api');
 	let baseUrl = $state('https://api.anthropic.com');
 	let apiKey = $state('');
 	let model = $state('claude-opus-4-7');
+	let passphrase = $state('');
 	let submitting = $state(false);
 	let toast = $state<{ kind: 'ok' | 'err'; msg: string } | null>(null);
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
 		toast = null;
-		if (!baseUrl.trim() || !apiKey.trim() || !model.trim()) {
-			toast = { kind: 'err', msg: 'all fields required' };
+		if (!baseUrl.trim() || !apiKey.trim() || !model.trim() || !passphrase) {
+			toast = { kind: 'err', msg: 'all fields required (including passphrase)' };
+			return;
+		}
+		if (passphrase.length < 8) {
+			toast = { kind: 'err', msg: 'passphrase must be ≥ 8 characters' };
 			return;
 		}
 		submitting = true;
 		try {
-			const blob = await encryptEndpointBlob({
-				base_url: baseUrl.trim(),
+			await login({
+				endpoint: baseUrl.trim(),
 				api_key: apiKey.trim(),
-				model: model.trim()
+				model: model.trim(),
+				passphrase
 			});
-			await setEndpoint(blob);
-			toast = { kind: 'ok', msg: 'endpoint stored — redirecting…' };
+			toast = { kind: 'ok', msg: 'session unlocked — redirecting…' };
 			setTimeout(() => goto('/adr'), 400);
 		} catch (e) {
 			const msg = e instanceof ApiError ? `${e.code}: ${e.message}` : String(e);
@@ -114,19 +121,24 @@
 							class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none font-mono"
 						/>
 					</label>
+					<label class="flex flex-col gap-1 text-sm">
+						<span class="text-xs text-muted-foreground">Passphrase (≥ 8 chars)</span>
+						<input
+							type="password"
+							bind:value={passphrase}
+							autocomplete="new-password"
+							placeholder="used to derive the AEAD key"
+							class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none font-mono"
+						/>
+					</label>
 					<p class="text-[0.7rem] text-muted-foreground">
-						Encrypted client-side (AES-GCM-256, M2 stub) before transit. Real AEAD scheme lands at
-						M3.
-					</p>
-					<p class="text-[0.7rem] text-amber-500 dark:text-amber-400">
-						⚠ M2 caveat: the server cannot decrypt the M2 stub blob yet. For working
-						dispatch, also set <code class="font-mono">ANTHROPIC_API_KEY</code> or
-						<code class="font-mono">OPENAI_API_KEY</code> env var before launching
-						<code class="font-mono">cobrust-studio serve</code>. The login form stores
-						the credential for M3+ when real AEAD lands.
+						Server derives an Argon2id key from your passphrase, AES-256-GCM-seals
+						the credentials, and holds the in-memory session key for the binary's
+						lifetime (ADR-0007). On restart, re-enter the passphrase. The
+						plaintext travels over TLS / localhost; the server never persists it.
 					</p>
 					<Button type="submit" disabled={submitting} class="mt-1">
-						{submitting ? 'Storing…' : 'Save endpoint'}
+						{submitting ? 'Unlocking…' : 'Unlock session'}
 					</Button>
 					{#if toast}
 						<div
