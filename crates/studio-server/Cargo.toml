@@ -38,6 +38,11 @@ tracing-subscriber.workspace = true
 time.workspace = true
 futures.workspace = true
 base64.workspace = true
+# M3 — embed `web/build/` (SvelteKit static export) into the release binary
+# per ADR-0002 single-binary deployment. The `mime-guess` feature pulls in
+# `mime_guess` so the static-asset handler can resolve Content-Type from
+# the embedded path without re-declaring `mime_guess` at the workspace.
+rust-embed.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
