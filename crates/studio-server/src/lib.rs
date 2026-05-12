@@ -28,6 +28,7 @@ pub mod error;
 pub mod routes;
 pub mod sse;
 pub mod state;
+pub mod synthetic;
 
 use std::net::SocketAddr;
 
@@ -41,6 +42,7 @@ pub use crate::error::RouteError;
 pub use crate::routes::{HealthResponse, VersionResponse};
 pub use crate::sse::{EventEnvelope, EventHub, SSE_BUFFER_CAP};
 pub use crate::state::{AppState, DispatchContext};
+pub use crate::synthetic::SyntheticProvider;
 
 /// Crate version exposed via the `/api/version` route.
 #[must_use]
