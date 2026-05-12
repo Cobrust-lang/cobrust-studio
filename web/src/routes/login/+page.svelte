@@ -1,13 +1,19 @@
 <!--
-	/login — custom endpoint + API key per ADR-0003 + ADR-0007 M6.
+	/login — custom endpoint + API key per ADR-0003 + ADR-0007 M6 + ADR-0008 M7.
 
 	Two tabs visually: "API key" (active, drives the flow) and "OAuth"
 	(greyed out with a "Coming v0.5.0" placeholder). The form POSTs
-	`{endpoint, api_key, model, passphrase}` plaintext over TLS/localhost
-	to `/api/login`; the server runs Argon2id(passphrase) → 32-byte key,
-	AES-256-GCM-seals the credentials, persists the blob in session_kv,
-	and holds the derived `SessionKey` in memory for the binary lifetime
-	(per ADR-0007). On binary restart the passphrase must be re-entered.
+	`{endpoint, api_key, model, passphrase, provider_kind}` plaintext over
+	TLS/localhost to `/api/login`; the server runs Argon2id(passphrase) →
+	32-byte key, AES-256-GCM-seals the credentials, persists the blob in
+	session_kv, and holds the derived `SessionKey` in memory for the binary
+	lifetime (per ADR-0007). On binary restart the passphrase must be
+	re-entered.
+
+	M7 addition (ADR-0008): a `<select>` for provider type + URL-based
+	auto-suggest reactive logic. The dropdown defaults to "anthropic" and
+	auto-suggests based on the base URL as the user types. The user can
+	override the suggestion.
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
@@ -20,8 +26,19 @@
 	let apiKey = $state('');
 	let model = $state('claude-opus-4-7');
 	let passphrase = $state('');
+	let providerKind = $state<'anthropic' | 'openai'>('anthropic');
 	let submitting = $state(false);
 	let toast = $state<{ kind: 'ok' | 'err'; msg: string } | null>(null);
+
+	// M7 (ADR-0008): URL-based auto-suggest for provider kind.
+	// Reactive: typing the URL updates the dropdown, but the user can override.
+	$effect(() => {
+		if (baseUrl.includes('anthropic.com')) {
+			providerKind = 'anthropic';
+		} else if (baseUrl.length > 0 && !baseUrl.includes('anthropic.com')) {
+			providerKind = 'openai';
+		}
+	});
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
@@ -40,7 +57,8 @@
 				endpoint: baseUrl.trim(),
 				api_key: apiKey.trim(),
 				model: model.trim(),
-				passphrase
+				passphrase,
+				provider_kind: providerKind
 			});
 			toast = { kind: 'ok', msg: 'session unlocked — redirecting…' };
 			setTimeout(() => goto('/adr'), 400);
@@ -120,6 +138,19 @@
 							autocomplete="off"
 							class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none font-mono"
 						/>
+					</label>
+					<label class="flex flex-col gap-1 text-sm">
+						<span class="text-xs text-muted-foreground">Provider</span>
+						<select
+							bind:value={providerKind}
+							class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none"
+						>
+							<option value="anthropic">Anthropic API</option>
+							<option value="openai"
+								>OpenAI-compatible (vLLM / DeepSeek / Together / OpenRouter / Groq /
+								Ollama)</option
+							>
+						</select>
 					</label>
 					<label class="flex flex-col gap-1 text-sm">
 						<span class="text-xs text-muted-foreground">Passphrase (≥ 8 chars)</span>
