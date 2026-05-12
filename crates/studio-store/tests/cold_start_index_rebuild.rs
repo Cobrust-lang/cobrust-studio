@@ -129,6 +129,8 @@ async fn index_rebuild_after_db_wipe_recovers_all_adrs() {
         let store = Store::open(&root).await.expect("first open");
         let initial = store.adr().list().await.expect("list");
         assert_eq!(initial.len(), 3, "first-open list must return all 3");
+        // Windows: pool must close before the db file can be unlinked.
+        store.close().await;
     }
 
     // Wipe all .db files under .cobrust-studio/.
@@ -173,8 +175,10 @@ async fn cold_start_picks_up_externally_added_markdown() {
     write_adr_fixture(&adr_d, 1, "Existing", "proposed");
 
     {
-        let _store = Store::open(&root).await.expect("first open");
+        let store = Store::open(&root).await.expect("first open");
         // ensure db materialises.
+        // Windows: pool must close before the db file can be unlinked.
+        store.close().await;
     }
 
     // External add (mimics git pull landing a new ADR), then drop the db so

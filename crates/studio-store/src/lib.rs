@@ -197,6 +197,19 @@ impl Store {
         &self.inner.pool
     }
 
+    /// Explicitly close the underlying SQLite pool.
+    ///
+    /// Tests on Windows must call this before attempting to
+    /// `fs::remove_file` the database, because Windows holds an
+    /// exclusive file lock until every handle is closed and sqlx
+    /// pool shutdown is async — `Drop` alone does not await it.
+    /// Unix unlink semantics allow file deletion while the handle
+    /// is open, so this is a no-op on Linux/macOS but mandatory on
+    /// Windows-CI.
+    pub async fn close(&self) {
+        self.inner.pool.close().await;
+    }
+
     /// Sub-handle for ADR markdown operations.
     #[must_use]
     pub fn adr(&self) -> adr::AdrHandle<'_> {

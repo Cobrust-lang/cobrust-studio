@@ -47,12 +47,18 @@ async fn boot_app_with_synthetic_router() -> (TempDir, axum::Router) {
     // collide on parallel runs).
     let ledger_path = root.join("ledger.jsonl");
     let cache_dir = root.join("llm_cache");
+    // Normalize to forward-slash so the TOML string parses on Windows.
+    // (Backslashes in `"..."` TOML strings would be interpreted as
+    // escape sequences — `C:\Users\...` fails parse. `\\` doubling
+    // works but is fragile; forward-slash is portable.)
+    let cache_dir_toml = cache_dir.to_string_lossy().replace('\\', "/");
+    let ledger_path_toml = ledger_path.to_string_lossy().replace('\\', "/");
     let toml = format!(
         r#"
 [router]
 strategy = "quality"
-cache_dir = "{}"
-ledger_path = "{}"
+cache_dir = "{cache_dir_toml}"
+ledger_path = "{ledger_path_toml}"
 preferred = ["synth:synthetic-1"]
 
 [providers.synth]
@@ -61,8 +67,6 @@ base_url = "https://example.invalid"
 api_key_env = ""
 models = ["synthetic-1"]
 "#,
-        cache_dir.display(),
-        ledger_path.display(),
     );
 
     let cfg = RouterConfig::from_toml_str(&toml).expect("config parse");
