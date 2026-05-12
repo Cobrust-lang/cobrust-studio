@@ -23,6 +23,7 @@ pub mod events;
 pub mod finding;
 pub mod health;
 pub mod ledger;
+pub mod login;
 pub mod project;
 pub mod version;
 
@@ -31,5 +32,6 @@ pub use auth::{SetEndpointRequest, SetEndpointResponse};
 pub use finding::{FindingDraftBody, FindingListResponse};
 pub use health::{HealthResponse, health};
 pub use ledger::{LEDGER_DEFAULT_N, LEDGER_MAX_N, LedgerRecentResponse};
+pub use login::{LoginRequest, LoginResponse, SessionStatusResponse};
 pub use project::ProjectCurrentResponse;
 pub use version::{VersionResponse, version};

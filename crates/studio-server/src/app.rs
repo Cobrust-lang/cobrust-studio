@@ -70,6 +70,8 @@ fn api_router() -> Router<AppState> {
         .nest("/ledger", routes::ledger::router())
         .nest("/events", routes::events::router())
         .nest("/dispatch", routes::dispatch::router())
+        // M6: /api/login, /api/logout, /api/session/status, /api/session/endpoint
+        .merge(routes::login::router())
         .fallback(api_not_found)
 }
 

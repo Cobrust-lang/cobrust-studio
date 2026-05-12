@@ -28,6 +28,7 @@ pub mod embed;
 pub mod error;
 pub mod router_init;
 pub mod routes;
+pub mod secret;
 pub mod sse;
 pub mod state;
 pub mod synthetic;
@@ -73,6 +74,14 @@ pub enum ServerError {
 /// process is signalled — graceful Ctrl-C handling lands with the SSE
 /// fan-out work in Wave A6+).
 ///
+/// ## M6 `--dev-api-key` injection
+///
+/// When `args.dev_api_key` is `Some(key)`, the server constructs a
+/// synthetic [`crate::secret::SessionKey`] + [`crate::secret::EndpointSecret`]
+/// at boot and writes them to `AppState.session_key` and `session_kv`,
+/// bypassing the `/login` UI. This allows Playwright fixtures, CI tests,
+/// and headless scripts to authenticate without a browser interaction.
+///
 /// # Errors
 /// Bubbles up [`ServerError`] from store open, bind, or serve loop.
 pub async fn serve(args: &ServeArgs) -> Result<(), ServerError> {
@@ -84,7 +93,53 @@ pub async fn serve(args: &ServeArgs) -> Result<(), ServerError> {
     // for the binding contract, and `crate::router_init` for the resolution
     // order. The `None` path keeps Wave-A4 503 behavior intact.
     let router = router_init::try_build_router_from_project(&project_root, &store).await?;
-    let state = AppState::new(store, router, project_root.clone());
+    let mut state = AppState::new(store, router, project_root.clone());
+
+    // M6: Apply --debug-session flag.
+    state.debug_session = args.debug_session;
+
+    // M6: Apply --dev-api-key escape hatch (ADR-0007 §"Env-var path retention").
+    if let Some(ref dev_key) = args.dev_api_key {
+        use rand_core::{OsRng, RngCore};
+        let mut salt = [0u8; 16];
+        OsRng.fill_bytes(&mut salt);
+
+        match secret::SessionKey::derive("dev-api-key-synthetic-passphrase", &salt) {
+            Ok(session_key) => {
+                let secret = secret::EndpointSecret {
+                    endpoint: args.dev_endpoint.clone(),
+                    api_key: dev_key.clone(),
+                    model: args.dev_model.clone(),
+                };
+                match session_key.seal(&secret) {
+                    Ok(ciphertext) => {
+                        let blob = studio_store::session::EncryptedBlob {
+                            ciphertext,
+                            nonce: Vec::new(),
+                            scheme: secret::SCHEME.to_string(),
+                        };
+                        if let Err(e) = state.store.session().set_endpoint(blob).await {
+                            tracing::warn!(error = %e, "--dev-api-key: failed to persist blob; boot continues");
+                        }
+                        let mut guard = state.session_key.write().await;
+                        *guard = Some(session_key);
+                        drop(guard);
+                        tracing::info!(
+                            endpoint = %args.dev_endpoint,
+                            model = %args.dev_model,
+                            "--dev-api-key: synthetic session key injected at boot",
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "--dev-api-key: seal failed; boot continues unauthenticated");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "--dev-api-key: key derivation failed; boot continues unauthenticated");
+            }
+        }
+    }
 
     // Wave A4 (A5 reconcile): the watcher → EventHub bridge is now spawned
     // inside [`build_router`] so test harnesses that boot via
