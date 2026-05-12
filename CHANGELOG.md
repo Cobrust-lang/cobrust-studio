@@ -4,6 +4,23 @@ All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-12
+
+**M7 multi-provider /login release.** The `/login` page now supports
+both Anthropic and OpenAI-compatible endpoints (vLLM / DeepSeek /
+Together / OpenRouter / Groq / Ollama) via an explicit `provider_kind`
+field with URL-based auto-suggest in the SvelteKit form. Closes Sarah
+v3/v4 Gate A. Sarah v4 verdict ("pilot-ready NOW for 1-5 person
+teams") is the headline shift: this release removes the last code-
+level blocker, leaving only social/outreach work for the remaining
+gates.
+
+Polish from the v0.2.1 follow-up cycle also lands here: Argon2id
+wall-clock benchmark with M4 baseline (70 ms median), passphrase
+rotation procedure documented, deprecation warning on
+`studio.toml::api_key_env` at boot, login.rs salt-generation order
+cleanup.
+
 ### Added
 
 - **M7 multi-provider /login (ADR-0008 Phase 2)** — `LoginRequest`
@@ -13,33 +30,76 @@ All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepac
   auto-suggest (Svelte 5 `$effect`). Dispatch `resolve_router()` selects
   `AnthropicProvider` or `OpenAiProvider` at runtime based on the sealed
   `provider_kind`; `Synthetic` returns 503 as defense-in-depth.
-  `--dev-provider-kind <KIND>` CLI flag + `COBRUST_DEV_PROVIDER_KIND` env
-  var extend the `--dev-api-key` headless path. Closes Sarah v3 audit
-  finding #3 ("multi-provider /login is a v0.3.x blocker"). 6 integration
-  tests gate the round-trip (wiremock Anthropic + OpenAI stubs). References
-  ADR-0008.
+  `--dev-provider-kind <KIND>` CLI flag + `COBRUST_DEV_PROVIDER_KIND`
+  env var extend the `--dev-api-key` headless path. Closes Sarah v3
+  audit finding #3 and Sarah v4 Gate A. 6 integration tests gate the
+  round-trip (wiremock Anthropic + OpenAI stubs) + 1 new Playwright
+  E2E asserts URL-hint auto-selection. References ADR-0008.
+
+- **ADR-0008 (status: accepted)** — multi-provider /login design.
+  Documents Option C (explicit field + URL hint), wire-format
+  additivity, dispatch match arm, and the back-compat path for
+  pre-M7 sealed blobs.
+
+- **`secret::tests::bench_argon2id_derive`** — release-mode timing
+  benchmark for `SessionKey::derive`. M4 measured at median 70 ms
+  (7x faster than ADR-0007 ~500 ms target). 2 s hard ceiling
+  enforced; `#[ignore]` by default. Closes Sarah v3 v0.3.x
+  "Argon2id wall-clock benchmark" gate.
+
+- **Passphrase rotation documentation** in
+  `docs/human/{zh,en}/secret-storage.md` — documents the
+  delete-blob-and-re-login procedure for v0.2.x (no
+  `/api/change-passphrase` route yet; v0.3.x+ ADR pending).
+  Closes Sarah v4 audit #3.
+
+- **README "Three credential paths — security hierarchy" table** —
+  makes explicit which paths preserve at-rest encryption vs bypass
+  it. Closes Sarah v4 audit #5.
 
 ### Changed
 
-- **README** rewritten for v0.2.1 posture — replaces v0.1.2 status
-  snapshot, reflects 5-platform first-time green, lists the seal-salt
-  bug honestly in §"Honest status," renumbers design-partner priority
-  list (gates #1-#2 now crossed-off).
-
-- **`docs/outreach/show-hn-draft-v1.md`** rewritten to v2 reflecting
-  v0.2.1 + Sarah v3 verdict. Posting checklist boxes now all ticked
-  except the optional screenshot.
+- **`Cargo.toml` workspace.package.version** — `0.2.1` → `0.3.0`.
+  Minor bump: new public API surface (`LoginRequest.provider_kind`,
+  `EndpointSecret.provider_kind`, `ProviderKind` re-exported from
+  `studio_server::secret`, `--dev-provider-kind` CLI flag).
 
 - **`router_init.rs`** logs a deprecation warning when any provider
   in `studio.toml` has a non-empty `api_key_env`. Closes Sarah v3
-  audit #2 ("v0.3.x: deprecation warning when api_key_env is non-
-  empty"). v0.3.x will introduce strict mode that errors instead.
+  audit #2. v0.4.x will introduce strict mode that errors instead.
 
 - **`routes/login.rs`** salt-generation order cleanup — defers salt
   + derive to after the wrong-passphrase guard. Closes Sarah v3
-  audit #4 ("salt generated speculatively before existing-blob
-  check"). Happy path is now a single Argon2id derivation; the
+  audit #4. Happy path is now a single Argon2id derivation; the
   existing-blob key is reused for the subsequent seal call.
+
+- **README rewritten for v0.2.1+ posture** — replaces v0.1.2 status
+  snapshot, reflects 5-platform first-time green, lists the seal-
+  salt bug honestly in §"Honest status," renumbers design-partner
+  priority list (gates #1, #2, #3 now crossed-off).
+
+- **`docs/outreach/show-hn-draft-v1.md`** rewritten to v2 reflecting
+  v0.2.1 + Sarah v3/v4 verdicts. Posting checklist boxes ticked
+  except the optional screenshot.
+
+- **`docs/agent/modules/studio-server.md::last_verified_commit`** —
+  bumped to the v0.3.0 release commit.
+
+### Methodology firsts (this cycle)
+
+- First **two consecutive ADSD two-phase dispatch SOPs** on adjacent
+  waves (M6 ADR-0007 → M7 ADR-0008) without intervening P10
+  checkpoint friction. Validates the autonomous-loop discipline +
+  the §"Two-phase dispatch" SOP as a repeatable pattern.
+
+- First **Sarah persona v4 cycle** with a one-version-gap verdict
+  shift: v3 ("2 months out") → v4 ("pilot-ready NOW for 1-5 person
+  teams"). Demonstrates continuous persona testing as the
+  methodology's pilot-readiness oracle.
+
+- First **persona-found bug fixed in the same cycle as the audit**
+  (Sarah v4 #1 README stale-text → fixed in the same Sarah-v4-
+  follow-up commit). Tight closure loop.
 
 ## [0.2.1] — 2026-05-12
 

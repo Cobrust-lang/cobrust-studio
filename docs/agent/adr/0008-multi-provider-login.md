@@ -1,7 +1,7 @@
 ---
 adr_id: "0008"
 title: M7 multi-provider /login — Anthropic + OpenAI-compatible via the SvelteKit form
-status: proposed
+status: accepted
 date: 2026-05-12
 supersedes: []
 superseded_by: []
