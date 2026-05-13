@@ -264,7 +264,14 @@ async function* postSse<TReq, TEvent>(
 	try {
 		while (true) {
 			const { value, done } = await reader.read();
-			if (done) break;
+			if (done) {
+				buffer += decoder.decode();
+				if (buffer.trim() !== '') {
+					const event = parseFrame(buffer);
+					if (event) yield event;
+				}
+				break;
+			}
 			buffer += decoder.decode(value, { stream: true });
 			// SSE frames are blank-line delimited.
 			let idx = buffer.indexOf('\n\n');

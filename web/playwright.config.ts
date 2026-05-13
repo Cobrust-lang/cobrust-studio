@@ -62,7 +62,7 @@ export default defineConfig({
 	projects: [
 		{
 			name: 'hermetic',
-			testIgnore: /dogfood\.spec\.ts$/,
+			testIgnore: /(dogfood|agent)\.spec\.ts$/,
 			use: {
 				...devices['Desktop Chrome'],
 				baseURL: process.env.STUDIO_BASE_URL ?? 'http://127.0.0.1:7878'
