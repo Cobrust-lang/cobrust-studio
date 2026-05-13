@@ -18,8 +18,8 @@
 		"test:e2e:i18n": "playwright test --config=playwright-i18n.config.ts",
 		"test:e2e:dogfood": "playwright test --config=playwright-dogfood.config.ts",
 		"test:e2e:setup": "playwright install --with-deps chromium",
-		"tauri:dev": "pnpm build && cargo run --manifest-path ../src-tauri/Cargo.toml",
-		"tauri:build": "tauri build --config ../src-tauri/tauri.conf.json"
+		"tauri:dev": "pnpm exec tauri dev --config ../src-tauri/tauri.conf.json",
+		"tauri:build": "pnpm exec tauri build --config ../src-tauri/tauri.conf.json"
 	},
 	"devDependencies": {
 		"@playwright/test": "^1.60.0",

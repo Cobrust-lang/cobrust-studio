@@ -4707,6 +4707,7 @@ dependencies = [
  "keyring",
  "libc",
  "rand_core 0.6.4",
+ "reqwest 0.12.28",
  "rust-embed",
  "serde",
  "serde_json",
