@@ -6,6 +6,26 @@ All notable changes to Cobrust Studio. Follows [Keep a Changelog](https://keepac
 
 ### Added
 
+- **M11 bounded agent-turn vertical slice (ADR-0012)** — `/agent` is no
+  longer documented as a one-shot dispatch page. The local slice now ships
+  `POST /api/agent-turn` as a bounded SSE timeline over Studio-managed
+  built-in tools.
+  - SSE event types are `iteration`, `tool_call`, `tool_result`, `done`,
+    and `error`.
+  - Default read-only tools: `fs.read`, `fs.list`, `git.status`,
+    `git.diff`, `project_tree`.
+  - Write/exec tools exist but are boot-gated behind
+    `--enable-write-tools`: `fs.write`, `fs.delete`, `shell.exec`.
+  - Important scope note: this slice uses a **text-JSON protocol** parsed
+    from normal model output (`{"tool_calls":[...]}` /
+    `{"final_text":"..."}`); it does **not** yet claim provider-native
+    function calling or MCP tool integration.
+  - `/login` and `/agent` no longer rely on a hardcoded
+    `claude-opus-4-7` UI default. Model discovery now flows through
+    `POST /api/models/preview` and `GET /api/models/session`.
+  - The `/agent` page now renders an iteration timeline instead of a
+    single completion transcript.
+
 - **M10 zh/en UI toggle (ADR-0011 Phase 2)** — closes the user dogfood
   feedback "没有中英文切换" by adding a custom Svelte 5 i18n store,
   typed English/Chinese message catalogs, and a visible `[ EN | 中 ]`

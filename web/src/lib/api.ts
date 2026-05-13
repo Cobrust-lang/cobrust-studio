@@ -17,6 +17,11 @@ import type {
 	Adr,
 	AdrDraft,
 	AdrSummary,
+	AgentTurnDone,
+	AgentTurnIteration,
+	AgentTurnRequest,
+	AgentTurnToolCall,
+	AgentTurnToolResult,
 	DispatchRequest,
 	EncryptedBlob,
 	EventEnvelope,
@@ -24,7 +29,9 @@ import type {
 	FindingDraft,
 	FindingSummary,
 	LedgerEntry,
+	ModelListResponse,
 	ProjectCurrent,
+	SessionStatus,
 	VersionInfo
 } from './types';
 
@@ -158,8 +165,20 @@ export async function logout(): Promise<{ status: string }> {
 	return jsonPost<Record<string, never>, { status: string }>('/api/logout', {});
 }
 
-export async function getSessionStatus(): Promise<{ authenticated: boolean }> {
-	return jsonGet<{ authenticated: boolean }>('/api/session/status');
+export async function getSessionStatus(): Promise<SessionStatus> {
+	return jsonGet<SessionStatus>('/api/session/status');
+}
+
+export async function previewModels(payload: {
+	endpoint: string;
+	api_key: string;
+	provider_kind: 'anthropic' | 'openai';
+}): Promise<ModelListResponse> {
+	return jsonPost<typeof payload, ModelListResponse>('/api/models/preview', payload);
+}
+
+export async function getSessionModels(): Promise<ModelListResponse> {
+	return jsonGet<ModelListResponse>('/api/models/session');
 }
 
 // ───── Dispatch (SSE) ──────────────────────────────────────────────
@@ -185,6 +204,13 @@ export type DispatchEvent =
 	  }
 	| { kind: 'error'; payload: { error: string; code: string } };
 
+export type AgentTurnEvent =
+	| { kind: 'iteration'; payload: AgentTurnIteration }
+	| { kind: 'tool_call'; payload: AgentTurnToolCall }
+	| { kind: 'tool_result'; payload: AgentTurnToolResult }
+	| { kind: 'done'; payload: AgentTurnDone }
+	| { kind: 'error'; payload: { error: string; code: string } };
+
 /**
  * Stream `POST /api/dispatch` as an async iterable of typed events.
  *
@@ -202,9 +228,25 @@ export async function* dispatchSse(
 	req: DispatchRequest,
 	signal?: AbortSignal
 ): AsyncGenerator<DispatchEvent, void, void> {
+	yield* postSse('/api/dispatch', req, parseDispatchSseFrame, signal);
+}
+
+export async function* agentTurnSse(
+	req: AgentTurnRequest,
+	signal?: AbortSignal
+): AsyncGenerator<AgentTurnEvent, void, void> {
+	yield* postSse('/api/agent-turn', req, parseAgentTurnSseFrame, signal);
+}
+
+async function* postSse<TReq, TEvent>(
+	path: string,
+	req: TReq,
+	parseFrame: (frame: string) => TEvent | null,
+	signal?: AbortSignal
+): AsyncGenerator<TEvent, void, void> {
 	let resp: Response;
 	try {
-		resp = await fetch('/api/dispatch', {
+		resp = await fetch(path, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
 			body: JSON.stringify(req),
@@ -229,7 +271,7 @@ export async function* dispatchSse(
 			while (idx !== -1) {
 				const frame = buffer.slice(0, idx);
 				buffer = buffer.slice(idx + 2);
-				const event = parseSseFrame(frame);
+				const event = parseFrame(frame);
 				if (event) yield event;
 				idx = buffer.indexOf('\n\n');
 			}
@@ -248,7 +290,41 @@ export async function* dispatchSse(
  * `:` are comments (keep-alive frames) and yield `null`. Returns the
  * typed `DispatchEvent` on success.
  */
-function parseSseFrame(frame: string): DispatchEvent | null {
+function parseDispatchSseFrame(frame: string): DispatchEvent | null {
+	const parsed = parseRawSseFrame(frame);
+	if (!parsed) return null;
+	switch (parsed.event) {
+		case 'chunk':
+			return { kind: 'chunk', delta: String(parsed.payload.delta ?? '') };
+		case 'done':
+			return { kind: 'done', payload: parsed.payload };
+		case 'error':
+			return { kind: 'error', payload: parsed.payload };
+		default:
+			return null;
+	}
+}
+
+function parseAgentTurnSseFrame(frame: string): AgentTurnEvent | null {
+	const parsed = parseRawSseFrame(frame);
+	if (!parsed) return null;
+	switch (parsed.event) {
+		case 'iteration':
+			return { kind: 'iteration', payload: parsed.payload };
+		case 'tool_call':
+			return { kind: 'tool_call', payload: parsed.payload };
+		case 'tool_result':
+			return { kind: 'tool_result', payload: parsed.payload };
+		case 'done':
+			return { kind: 'done', payload: parsed.payload };
+		case 'error':
+			return { kind: 'error', payload: parsed.payload };
+		default:
+			return null;
+	}
+}
+
+function parseRawSseFrame(frame: string): { event: string; payload: any } | null {
 	let event = 'message';
 	const data: string[] = [];
 	for (const rawLine of frame.split('\n')) {
@@ -258,19 +334,8 @@ function parseSseFrame(frame: string): DispatchEvent | null {
 		else if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
 	}
 	if (data.length === 0) return null;
-	const body = data.join('\n');
 	try {
-		const parsed = JSON.parse(body);
-		switch (event) {
-			case 'chunk':
-				return { kind: 'chunk', delta: String(parsed.delta ?? '') };
-			case 'done':
-				return { kind: 'done', payload: parsed };
-			case 'error':
-				return { kind: 'error', payload: parsed };
-			default:
-				return null;
-		}
+		return { event, payload: JSON.parse(data.join('\n')) };
 	} catch {
 		return null;
 	}

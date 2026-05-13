@@ -97,6 +97,9 @@ pub struct AppState {
     /// test introspection (never the `api_key`).
     pub debug_session: bool,
 
+    /// Enables ADR-0012 write/exec tools (`fs.write`, `fs.delete`, `shell.exec`).
+    pub enable_write_tools: bool,
+
     /// M8 persistent-session backend (ADR-0009).
     ///
     /// `Arc<dyn PersistStore + Send + Sync>` so all `AppState` clones
@@ -130,6 +133,7 @@ impl std::fmt::Debug for AppState {
             .field("events", &self.events)
             .field("session_key", &"Arc<RwLock<Option<SessionKey>>>")
             .field("debug_session", &self.debug_session)
+            .field("enable_write_tools", &self.enable_write_tools)
             .field("persist", &"Arc<dyn PersistStore>")
             .finish()
     }
@@ -179,6 +183,7 @@ impl AppState {
             events: EventHub::new(),
             session_key: Arc::new(RwLock::new(None)),
             debug_session: false,
+            enable_write_tools: false,
             persist,
         }
     }

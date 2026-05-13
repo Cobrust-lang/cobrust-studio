@@ -15,6 +15,7 @@ fn embedded_args(project: std::path::PathBuf) -> ServeArgs {
         dev_endpoint: "https://api.anthropic.com".to_string(),
         dev_model: "claude-opus-4-7".to_string(),
         debug_session: false,
+        enable_write_tools: false,
         dev_provider_kind: ProviderKind::Anthropic,
         persist_session: PersistBackend::None,
         persist_session_file: None,

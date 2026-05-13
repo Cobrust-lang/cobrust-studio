@@ -1,8 +1,8 @@
 ---
 doc_kind: module
 module_id: studio-server
-last_verified_commit: 45ad600
-dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0007, adr:0008, adr:0009, adr:0010, adr:0013]
+last_verified_commit: 4b0f6a1
+dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0007, adr:0008, adr:0009, adr:0010, adr:0012, adr:0013]
 ---
 
 # Module: studio-server
@@ -120,6 +120,32 @@ All 10 M1 routes landed; each handler returns
       router_server | router_failed | router_no_provider |
       router_config | router_io`).
 
+- `POST /api/agent-turn`
+  → 400 `{ code: "invalid_body" }` when the body is malformed, `model`
+    is empty, `messages` is empty, `max_iterations` is outside `1..=16`,
+    or any message role is not `system|user|assistant`.
+  → 400 `{ code: "unknown_tool" | "tool_not_allowed" }` when
+    `tools_allowed` requests an unknown tool or a write/exec tool while
+    `--enable-write-tools` is disabled.
+  → SSE `text/event-stream` for the bounded ADR-0012 turn loop. Event
+    types: `iteration`, `tool_call`, `tool_result`, `done`, `error`.
+    Tool execution is server-side over the built-in tool set, driven by a
+    text-JSON protocol (`{"tool_calls":[...]}` / `{"final_text":"..."}`)
+    embedded in normal model completions; this route does **not** yet use
+    provider-native function calling.
+
+- `POST /api/models/preview`
+  → 200 `ModelListResponse { provider_kind, selected_model: null, models }`
+    using the endpoint/key supplied in the request body without
+    persisting them.
+  → 400/503 model-list errors using `model_list_*` envelope codes.
+
+- `GET /api/models/session`
+  → 200 `ModelListResponse { provider_kind, selected_model, models }`
+    using the already-authenticated sealed session.
+  → 400 `{ code: "no_session" | "session_decrypt_failed" }` or 404
+    `{ code: "no_endpoint" }` when no authenticated session is available.
+
 #### Watcher bridge
 
 `serve()` spawns two tokio tasks before binding the listener:
@@ -186,10 +212,11 @@ crates/studio-server/src/
 ├── cli.rs               # clap-derive Cli/Command/ServeArgs
 ├── error.rs             # RouteError enum + IntoResponse (JSON {error,code})
 ├── state.rs             # AppState { store, router, project_root,
-│                        #            started_at, events: EventHub }
-│                        # + DispatchContext { task_tag } newtype
+│                        #            started_at, events: EventHub,
+│                        #            enable_write_tools, session_key, persist }
 ├── sse.rs               # EventHub fan-out (broadcast::Sender + 256-cap)
-├── app.rs               # build_router(state) — mounts 10 routes + fallback
+├── app.rs               # build_router(state) — mounts API + embed fallback
+├── agent_loop.rs        # ADR-0012 built-in tool set + text-JSON directive parser
 ├── synthetic.rs         # SyntheticProvider — in-process LlmProvider impl
 │                        # (deterministic Chunk stream; test/dev scaffolding)
 ├── router_init.rs       # try_build_router_from_project (studio.toml
@@ -197,12 +224,15 @@ crates/studio-server/src/
 └── routes/
     ├── mod.rs
     ├── adr.rs           # GET /api/adr (+/:id), POST /api/adr
+    ├── agent_turn.rs    # POST /api/agent-turn
     ├── auth.rs          # POST /api/auth/set-endpoint
     ├── dispatch.rs      # POST /api/dispatch (SSE done|error; A5 wired)
     ├── events.rs        # GET /api/events (SSE, watcher-bridge consumer)
     ├── finding.rs       # GET /api/finding, POST /api/finding
     ├── health.rs        # GET /api/health
     ├── ledger.rs        # GET /api/ledger/recent[?n=N]
+    ├── login.rs         # POST /api/login, logout, session status
+    ├── models.rs        # POST /api/models/preview, GET /api/models/session
     ├── project.rs       # GET /api/project/current
     └── version.rs       # GET /api/version
 ```

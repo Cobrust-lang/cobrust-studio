@@ -1,8 +1,8 @@
 ---
 doc_kind: module
 module_id: web-frontend
-last_verified_commit: eff54b4
-dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0011, adr:0013]
+last_verified_commit: 4b0f6a1
+dependencies: [adr:0001, adr:0002, adr:0003, adr:0006, adr:0011, adr:0012, adr:0013]
 ---
 
 # Module: web-frontend
@@ -74,9 +74,9 @@ init` and migrate.
 | Path | Wire endpoints | Notes |
 |---|---|---|
 | `/` | — | Redirect to `/adr` on mount. |
-| `/login` | `POST /api/auth/set-endpoint` | API key tab (active); OAuth tab greyed pending v0.5.0. Client-side AES-GCM-256 encryption via `$lib/crypto.ts` (M2 stub; real AEAD M3). |
+| `/login` | `POST /api/login`, `POST /api/models/preview` | API key tab (active); OAuth tab greyed pending v0.5.0. The page can preview provider models before submit, then posts plaintext credentials to `/api/login` for server-side sealing into the authenticated session. |
 | `/adr` | `GET /api/adr`, `GET /api/adr/:id`, `POST /api/adr`, `GET /api/events` | List + detail dialog + create form. Live re-list on `adr_*` events. |
-| `/agent` | `POST /api/dispatch` (SSE) | Composer + live stream renderer; `chunk` → append, `done` → summary badges, `error` → envelope banner. 503 `router_not_configured` → "Configure LLM endpoint" CTA → `/login`. |
+| `/agent` | `POST /api/agent-turn` (SSE), `GET /api/models/session`, `GET /api/session/status` | Bounded agent-turn composer + timeline. Renders `iteration`, `tool_call`, `tool_result`, `done`, `error` events. Initializes model from session/model-discovery instead of a hardcoded default. Unauthenticated or missing-session state links to `/login`. |
 | `/finding` | `GET /api/finding`, `POST /api/finding`, `GET /api/events` | Symmetric to `/adr` with severity colour badges (P0=red, P1=warn-orange, P2=yellow, P3=info-blue). Detail dialog is summary-only — singleton `GET /api/finding/:id` is M2+ per the server module-doc. |
 | `/ledger` | `GET /api/ledger/recent[?n=N]` | Recent-N table. `n` clamped to `[1, 1000]` server-side. |
 
@@ -90,10 +90,11 @@ init` and migrate.
 
 - **`api.ts`** — typed `fetch` wrapper exporting `listAdrs`, `getAdr`,
   `createAdr`, `listFindings`, `createFinding`, `recentLedger`,
-  `getProject`, `getVersion`, `setEndpoint`, `dispatchSse` (async
-  generator over SSE frames), `subscribeEvents` (EventSource wrapper).
-  Every non-2xx surface throws `ApiError` carrying the server-supplied
-  `{error, code}` envelope.
+  `getProject`, `getVersion`, `login`, `logout`, `getSessionStatus`,
+  `previewModels`, `getSessionModels`, `dispatchSse`, `agentTurnSse`
+  (async generators over SSE frames), and `subscribeEvents`
+  (EventSource wrapper). Every non-2xx surface throws `ApiError`
+  carrying the server-supplied `{error, code}` envelope.
 
 - **`crypto.ts`** — M2 WebCrypto stub. AES-GCM-256 with a
   PBKDF2-derived key over a fixed passphrase (100k SHA-256 rounds);
@@ -199,12 +200,14 @@ Two distinct SSE consumers:
    15s keep-alive comment frames (per studio-server module-doc
    §"Wave A4 watcher bridge") are invisible to EventSource.
 
-2. **`/api/dispatch`** — `dispatchSse()` in `api.ts` hand-rolls SSE
-   parsing over `fetch` + `ReadableStream` because the browser's
-   `EventSource` API doesn't accept `POST` requests. Async generator
-   yields typed events (`{kind: 'chunk', delta}` /
-   `{kind: 'done', payload}` / `{kind: 'error', payload}`) per
-   ADR-0006 F-01 wire contract. Cancellation via `AbortSignal`.
+2. **`POST /api/dispatch` and `POST /api/agent-turn`** — `dispatchSse()`
+   and `agentTurnSse()` in `api.ts` hand-roll SSE parsing over `fetch`
+   + `ReadableStream` because the browser's `EventSource` API doesn't
+   accept `POST` requests. `dispatchSse()` yields typed one-shot events
+   (`{kind: 'chunk', delta}` / `{kind: 'done', payload}` /
+   `{kind: 'error', payload}`) per ADR-0006. `agentTurnSse()` yields the
+   ADR-0012 turn timeline (`iteration` / `tool_call` / `tool_result` /
+   `done` / `error`). Cancellation via `AbortSignal`.
 
 ### Theme system
 
@@ -302,7 +305,7 @@ tests/e2e/_teardown-dogfood.ts  # globalTeardown — kill (no tempdir)
 tests/e2e/login.spec.ts         # 5 tests — endpoint config flow + provider hint
 tests/e2e/i18n.spec.ts          # 2 tests — client-only zh/en toggle + reload persistence
 tests/e2e/adr.spec.ts           # 3 tests — list / create / detail
-tests/e2e/agent.spec.ts         # 2 tests — dispatch SSE (router-None + Some)
+tests/e2e/agent.spec.ts         # 2 tests — legacy one-shot dispatch SSE (stale vs current /agent UI)
 tests/e2e/finding.spec.ts       # 3 tests — list / create / summary detail
 tests/e2e/ledger.spec.ts        # 3 tests — list / n-query / refresh
 tests/e2e/dogfood.spec.ts       # 2 tests — M3 done-means constitutional ADRs

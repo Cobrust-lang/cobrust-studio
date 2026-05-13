@@ -201,7 +201,9 @@ fn build_session_provider(
 ///    when a session_key slot exists but is empty).
 ///
 /// Returns `Ok(router)` on success or an HTTP [`Response`] to return immediately.
-async fn resolve_router(state: &AppState) -> Result<Arc<studio_router::Router>, Response> {
+pub(crate) async fn resolve_router(
+    state: &AppState,
+) -> Result<Arc<studio_router::Router>, Response> {
     // Try the session-key path first (ADR-0007 primary path).
     let key = {
         let guard = state.session_key.read().await;

@@ -7,7 +7,7 @@
 //! |--------|------|-----------|
 //! | POST | `/api/login` | Derives Argon2id key + seals `EndpointSecret`; writes `session_kv`; stashes `SessionKey` in `AppState`. |
 //! | POST | `/api/logout` | Drops the in-memory `SessionKey`. Next dispatch returns 401. |
-//! | GET | `/api/session/status` | Returns `{ "authenticated": bool }` for frontend redirect logic. |
+//! | GET | `/api/session/status` | Returns authenticated state plus non-secret selected model metadata for frontend redirect/model initialisation. |
 //! | GET | `/api/session/endpoint` | (debug-only, `--debug-session` flag) decrypted endpoint + model; never api_key. |
 //!
 //! ## Security notes
@@ -87,6 +87,12 @@ pub struct SessionStatusResponse {
     /// `true` when a `SessionKey` is held in-memory (user has logged in and
     /// the process has not restarted since).
     pub authenticated: bool,
+    /// Decrypted selected model for product UI initialisation. Never includes
+    /// endpoint or api_key.
+    pub selected_model: Option<String>,
+    /// Decrypted provider kind for product UI initialisation. Never includes
+    /// endpoint or api_key.
+    pub provider_kind: Option<ProviderKind>,
 }
 
 /// Response body for `GET /api/session/endpoint` (debug-only).
@@ -365,15 +371,40 @@ pub async fn logout(
 /// Returns `{ "authenticated": true }` when a `SessionKey` is held in-memory,
 /// `{ "authenticated": false }` otherwise. Used by the frontend to decide
 /// whether to redirect to `/login`.
-#[allow(clippy::unused_async)]
 pub async fn session_status(State(state): State<AppState>) -> Response {
-    let guard = state.session_key.read().await;
-    let authenticated = guard.is_some();
-    drop(guard);
+    let key = {
+        let guard = state.session_key.read().await;
+        guard.clone()
+    };
+    let authenticated = key.is_some();
+    let mut selected_model = None;
+    let mut provider_kind = None;
+
+    if let Some(key) = key {
+        match state.store.session().get_endpoint().await {
+            Ok(Some(blob)) => match key.open(&blob.ciphertext) {
+                Ok(secret) => {
+                    selected_model = Some(secret.model);
+                    provider_kind = Some(secret.provider_kind);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "session/status: open failed");
+                }
+            },
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "session/status: endpoint read failed");
+            }
+        }
+    }
 
     (
         StatusCode::OK,
-        Json(SessionStatusResponse { authenticated }),
+        Json(SessionStatusResponse {
+            authenticated,
+            selected_model,
+            provider_kind,
+        }),
     )
         .into_response()
 }

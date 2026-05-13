@@ -1,7 +1,7 @@
 ---
 doc_kind: roadmap
 roadmap_id: v0.4.x
-last_verified_commit: 45ad600
+last_verified_commit: 4b0f6a1
 status: live
 ---
 
@@ -74,22 +74,24 @@ The queue is therefore resequenced around a new runtime foundation wave:
 
 ### M11 — Agent-loop tool-call environment (ADR-0012)
 
-- **Status**: Phase 1 spike landed (`b6cc0b8`); Phase 2 P9 dispatch
-  queued after M9T/M9/M10 because the timeline UI and tool-call UX
-  should be validated inside the desktop-first runtime.
-- **Scope**: `/api/agent-turn` route + agent_loop module + 5 read-only
-  built-in tools (`fs.read`, `fs.list`, `git.status`, `git.diff`,
-  `project_tree`) + 3 opt-in write tools (`fs.write`, `fs.delete`,
-  `shell.exec`) gated behind `--enable-write-tools` + per-provider
-  tool-call API translation + SvelteKit `/agent` page rewritten as
-  iteration timeline.
-- **Estimated**: ~180-240 min Opus-class P9 work.
+- **Status**: implemented locally and documented as accepted via
+  ADR-0012.
+- **Scope shipped**: `/api/agent-turn` bounded loop + `agent_loop`
+  module + 5 default read-only tools (`fs.read`, `fs.list`,
+  `git.status`, `git.diff`, `project_tree`) + 3 opt-in write/exec
+  tools (`fs.write`, `fs.delete`, `shell.exec`) gated behind
+  `--enable-write-tools` + `/api/models/preview` and
+  `/api/models/session` model discovery + SvelteKit `/agent` page
+  rewritten as an iteration timeline.
+- **Important honesty note**: the shipped slice uses a **text-JSON tool
+  protocol** (`{"tool_calls":[...]}` / `{"final_text":"..."}`)
+  parsed from normal model completions. It does **not** yet ship
+  provider-native function calling, MCP adapters, or subagent spawning.
 - **Closes**: User dogfood feedback 2026-05-12 evening 大问题 ("没有建立
-  Agent loop toolcall 环境").
+  Agent loop toolcall 环境") at bounded vertical-slice fidelity.
 - **Scope shift**: CLAUDE.md §1 explicitly deferred "MCP-based tool
-  calls" + "runner adapters" to post-MVP. M11 promotes built-in tool
-  calls (NOT MCP yet — MCP stays v0.5.x+) from deferred to v0.4.x
-  shipped. Phase 2 lands the CLAUDE.md §1 amendment in the same commit.
+  calls" + "runner adapters" to post-MVP. M11 only promotes the
+  bounded built-in agent-turn slice; MCP remains v0.5.x+ work.
 
 ### Tag plan
 

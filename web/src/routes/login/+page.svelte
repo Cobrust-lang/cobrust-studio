@@ -19,7 +19,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import Button from '$lib/components/Button.svelte';
-	import { login, getVersion, ApiError } from '$lib/api';
+	import { login, getVersion, previewModels, ApiError } from '$lib/api';
 	import { locale, setLocale, t } from '$lib/i18n';
 	import type { Locale } from '$lib/i18n';
 	import { cn } from '$lib/util';
@@ -27,9 +27,11 @@
 	let tab = $state<'api' | 'oauth'>('api');
 	let baseUrl = $state('https://api.anthropic.com');
 	let apiKey = $state('');
-	let model = $state('claude-opus-4-7');
+	let model = $state('');
 	let passphrase = $state('');
 	let providerKind = $state<'anthropic' | 'openai'>('anthropic');
+	let modelOptions = $state<string[]>([]);
+	let loadingModels = $state(false);
 	let submitting = $state(false);
 	let toast = $state<{ kind: 'ok' | 'err'; msg: string } | null>(null);
 
@@ -43,23 +45,60 @@
 		}
 	});
 
-	$effect(() => {
+	function chooseLocale(next: Locale) {
+		setLocale(next);
+	}
+
+	function clearDiscoveredModels() {
+		modelOptions = [];
+		model = '';
+	}
+
+	function handleBaseUrlInput() {
 		if (baseUrl.includes('anthropic.com')) {
 			providerKind = 'anthropic';
 		} else if (baseUrl.length > 0 && !baseUrl.includes('anthropic.com')) {
 			providerKind = 'openai';
 		}
-	});
+		clearDiscoveredModels();
+	}
 
-	function chooseLocale(next: Locale) {
-		setLocale(next);
+	function handleProviderChange() {
+		clearDiscoveredModels();
+	}
+
+	async function fetchModels() {
+		toast = null;
+		if (!baseUrl.trim() || !apiKey.trim()) {
+			toast = { kind: 'err', msg: $t('login.errFetchModelsFields') };
+			return;
+		}
+		loadingModels = true;
+		try {
+			const resp = await previewModels({
+				endpoint: baseUrl.trim(),
+				api_key: apiKey.trim(),
+				provider_kind: providerKind
+			});
+			modelOptions = resp.models;
+			model = resp.models[0] ?? '';
+			toast = { kind: 'ok', msg: $t('login.modelsLoaded', { count: resp.models.length }) };
+		} catch (e) {
+			const msg = e instanceof ApiError ? `${e.code}: ${e.message}` : String(e);
+			toast = { kind: 'err', msg };
+		} finally {
+			loadingModels = false;
+		}
 	}
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
 		toast = null;
 		if (!baseUrl.trim() || !apiKey.trim() || !model.trim() || !passphrase) {
-			toast = { kind: 'err', msg: $t('login.errAllFields') };
+			toast = {
+				kind: 'err',
+				msg: model.trim() ? $t('login.errAllFields') : $t('login.errModelRequired')
+			};
 			return;
 		}
 		if (passphrase.length < 8) {
@@ -151,6 +190,7 @@
 						<input
 							type="text"
 							bind:value={baseUrl}
+							oninput={handleBaseUrlInput}
 							placeholder="https://api.anthropic.com"
 							autocomplete="off"
 							class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none"
@@ -164,18 +204,9 @@
 						<input
 							type="password"
 							bind:value={apiKey}
+							oninput={clearDiscoveredModels}
 							autocomplete="off"
 							placeholder="sk-…"
-							class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none font-mono"
-						/>
-					</label>
-					<label class="flex flex-col gap-1 text-sm">
-						<span class="text-xs text-muted-foreground">{$t('common.model')}</span>
-						<input
-							type="text"
-							bind:value={model}
-							placeholder="claude-opus-4-7"
-							autocomplete="off"
 							class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none font-mono"
 						/>
 					</label>
@@ -183,6 +214,7 @@
 						<span class="text-xs text-muted-foreground">{$t('common.provider')}</span>
 						<select
 							bind:value={providerKind}
+							onchange={handleProviderChange}
 							class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none"
 						>
 							<option value="anthropic">Anthropic API</option>
@@ -191,6 +223,30 @@
 							>
 						</select>
 					</label>
+					<div class="flex flex-col gap-1 text-sm">
+						<div class="flex items-center justify-between gap-2">
+							<span class="text-xs text-muted-foreground">{$t('common.model')}</span>
+							<Button type="button" variant="ghost" disabled={loadingModels} onclick={fetchModels}>
+								{loadingModels ? $t('login.fetchingModels') : $t('login.fetchModels')}
+							</Button>
+						</div>
+						<input
+							type="text"
+							bind:value={model}
+							list="login-model-options"
+							placeholder={$t('login.modelPlaceholder')}
+							autocomplete="off"
+							class="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-ring focus:outline-none font-mono"
+						/>
+						<datalist id="login-model-options">
+							{#each modelOptions as option}
+								<option value={option}></option>
+							{/each}
+						</datalist>
+						<span class="text-[0.65rem] text-muted-foreground/80 leading-snug">
+							{$t('login.modelHelp')}
+						</span>
+					</div>
 					<label class="flex flex-col gap-1 text-sm">
 						<span class="text-xs text-muted-foreground">{$t('login.passphrase')}</span>
 						<input

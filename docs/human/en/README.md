@@ -11,8 +11,10 @@ doc-coverage CI gate, bilingual + agent-doc tracks — and packages it in
 a desktop-first Tauri shell around the same SvelteKit UI and Rust backend.
 
 Login with your LLM provider's API endpoint + key. Point at a git repo.
-Studio orchestrates AI agents, captures every decision as an ADR,
-every failure as a finding, and every dispatch in a token ledger. M9 adds
+Studio captures every decision as an ADR, every failure as a finding,
+and every dispatch in a token ledger. The current `/agent` surface is a
+bounded agent-turn timeline: it can iterate with built-in project-scoped
+tools, then stream the iterations and tool results back to the UI. M9 adds
 optional `task_tag` dispatch metadata so the ledger can be analysed by
 work type without changing the provider request shape. M10 adds a
 visible `[ EN | 中 ]` UI toggle so the login and five core pages can run
@@ -25,9 +27,9 @@ in English or Chinese.
 - **M2 — Frontend MVP**: SvelteKit UI, 4 core pages.
 - **M3 — Dogfood + polish**: Studio manages its own ADRs via Studio UI.
 - **M4 — v0.1.0 release**: single binary, demo, external review.
-- **M9T/M9/M10 — v0.4.x desktop + ledger metadata + i18n**: Tauri
-  shell, persistent session, `task_tag` ledger plumbing, and the zh/en UI
-  toggle.
+- **M9T/M9/M10/M11 — v0.4.x desktop + ledger metadata + i18n + bounded
+  agent turns**: Tauri shell, persistent session, `task_tag` ledger
+  plumbing, zh/en UI toggle, and the `/agent` iteration timeline.
 
 5-day target from M0 to M4. See [`../../../CLAUDE.md`](../../../CLAUDE.md) §6.
 

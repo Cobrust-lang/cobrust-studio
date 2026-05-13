@@ -22,6 +22,7 @@
 //! - `GET /api/ledger/recent`
 //! - `GET /api/events` (SSE state-change channel)
 
+pub mod agent_loop;
 pub mod app;
 pub mod cli;
 pub mod embed;
@@ -204,6 +205,7 @@ async fn state_from_args(args: &ServeArgs) -> Result<(std::path::PathBuf, AppSta
         persist::build_store(args.persist_session, args.persist_session_file.clone())?.into();
     let mut state = AppState::with_persist(store, router, project_root.clone(), persist_arc);
     state.debug_session = args.debug_session;
+    state.enable_write_tools = args.enable_write_tools;
     auto_unlock_on_boot(&state).await;
     inject_dev_key(args, &state).await;
     Ok((project_root, state))

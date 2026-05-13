@@ -108,7 +108,19 @@ export interface LedgerEntry {
 	error_code: string | null;
 }
 
-// ───── Auth (ADR-0003) ─────────────────────────────────────────────
+// ───── Models / Auth (ADR-0003) ───────────────────────────────────
+
+export interface ModelListResponse {
+	provider_kind: Exclude<ProviderKind, 'synthetic'>;
+	selected_model: string | null;
+	models: string[];
+}
+
+export interface SessionStatus {
+	authenticated: boolean;
+	selected_model: string | null;
+	provider_kind: ProviderKind | null;
+}
 
 /**
  * Opaque AEAD-encrypted credential triple. Server is a pass-through —
@@ -179,6 +191,53 @@ export interface DispatchDone {
 	text: string;
 	usage: TokenUsage;
 	cache_hit: boolean;
+	task_tag: string | null;
+}
+
+// ───── Agent turn (ADR-0012) ─────────────────────────────────────────
+
+export interface AgentTurnRequest {
+	model: string;
+	system?: string;
+	messages: DispatchMessage[];
+	params?: SamplingParams;
+	max_iterations?: number;
+	tools_allowed?: string[];
+	task_tag?: string;
+}
+
+export interface AgentTurnIteration {
+	n: number;
+	model: string;
+	text: string;
+	usage: TokenUsage;
+	cache_hit: boolean;
+	stop_reason: string;
+}
+
+export interface AgentTurnToolCall {
+	iteration: number;
+	tool: string;
+	input: unknown;
+}
+
+export interface ToolExecutionError {
+	code: string;
+	message: string;
+}
+
+export interface AgentTurnToolResult {
+	iteration: number;
+	tool: string;
+	output: unknown;
+	error: ToolExecutionError | null;
+	ms: number;
+}
+
+export interface AgentTurnDone {
+	final_text: string;
+	iterations: number;
+	total_tokens: TokenUsage;
 	task_tag: string | null;
 }
 

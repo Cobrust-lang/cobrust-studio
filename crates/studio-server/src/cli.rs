@@ -120,6 +120,10 @@ pub struct ServeArgs {
     #[arg(long)]
     pub debug_session: bool,
 
+    /// Enable ADR-0012 write/exec tools in `/api/agent-turn`.
+    #[arg(long, env = "COBRUST_ENABLE_WRITE_TOOLS")]
+    pub enable_write_tools: bool,
+
     /// Provider kind for the `--dev-api-key` boot-time injection path
     /// (M7, ADR-0008). Defaults to `anthropic` for backward compat with
     /// v0.2.x callers that use `--dev-api-key` without specifying a kind.
@@ -193,6 +197,7 @@ impl std::fmt::Debug for ServeArgs {
             .field("dev_endpoint", &self.dev_endpoint)
             .field("dev_model", &self.dev_model)
             .field("debug_session", &self.debug_session)
+            .field("enable_write_tools", &self.enable_write_tools)
             .field("dev_provider_kind", &self.dev_provider_kind)
             .field("persist_session", &self.persist_session)
             .field("persist_session_file", &self.persist_session_file)

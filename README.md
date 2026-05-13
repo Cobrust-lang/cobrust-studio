@@ -5,14 +5,15 @@
 **A desktop-first control plane for managing AI coding agents under engineering discipline.**
 
 Open the desktop app or run the headless server, point it at a git repo, and it gives you a typed REST + SSE API + a 5-page SvelteKit UI
-to dispatch LLM completions, capture the resulting decisions as **Architecture
-Decision Records** (markdown), capture the surprises as **findings** (markdown),
-and ledger every token through a JSONL audit trail. All git-native — your `docs/`
+to run bounded agent turns and one-shot LLM dispatches, capture the resulting
+decisions as **Architecture Decision Records** (markdown), capture the surprises
+as **findings** (markdown), and ledger every token through a JSONL audit trail.
+All git-native — your `docs/`
 tree stays plain markdown editable by `vim`.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-blue.svg)](#license)
 [![Release](https://img.shields.io/github/v/release/Cobrust-lang/cobrust-studio?label=release)](https://github.com/Cobrust-lang/cobrust-studio/releases)
-[![Stage](https://img.shields.io/badge/stage-v0.3.0%20early-orange.svg)](CHANGELOG.md)
+[![Stage](https://img.shields.io/badge/stage-v0.4.x%20local-orange.svg)](CHANGELOG.md)
 [![ADSD](https://img.shields.io/badge/methodology-ADSD-blue)](https://github.com/Cobrust-lang/agent-driven-development)
 
 </div>
@@ -95,7 +96,7 @@ across reloads.
 
 - **/login** — paste your LLM endpoint + API key (custom endpoint or OpenAI-compatible)
 - **/adr** — list/detail/create the 6+ ADRs that live in this repo (`docs/agent/adr/`)
-- **/agent** — write a prompt, submit, watch the SSE stream of completion chunks
+- **/agent** — run a bounded agent turn, watch the timeline of iterations + tool calls + tool results + final answer
 - **/finding** — list the failures + bug postmortems captured during development
 - **/ledger** — every LLM dispatch with provider, model, tokens, latency, cost
 
@@ -142,7 +143,7 @@ Use the `/login` page to configure your LLM endpoint. Fill in:
 
 - **Endpoint URL** (e.g. `https://api.anthropic.com`)
 - **API key**
-- **Model** (e.g. `claude-opus-4-7`)
+- **Model** — fetched from your provider via the login model-discovery action, then stored in the sealed session
 - **Passphrase** — used to encrypt the key before disk storage (never stored itself)
 
 Studio derives an AES-256 key from your passphrase via Argon2id (intentionally slow
@@ -265,7 +266,7 @@ Pick `/login` unless you have a specific reason not to.
 | Negative-results discipline | None | Manual `findings/` convention | **First-class finding type + CI gate** |
 | CI gate forcing the discipline | None | Whatever you write | **`doc-coverage.sh` 6-step gate** |
 | 5-min self-host | No (SaaS only) | N/A | **Yes (9 MiB single binary)** |
-| Multi-agent dispatch parallelism | No | No | **Yes (4-way cap per ADSD §1)** |
+| Bounded agent-turn timeline | No | No | **Yes (`/api/agent-turn` with built-in tools)** |
 | Cost | Per-seat-per-month | Free + your time | Free + your time |
 
 If your engineering culture already does "ADR + plain markdown + git" and you
@@ -288,9 +289,10 @@ placeholder (vs a real git SHA), or if `cargo test` has any FAILED groups.
                       │ REST + SSE (axum 0.7)
 ┌─────────────────────▼────────────────────────────────┐
 │  studio-server     /api/health      /api/version     │
-│                    /api/auth        /api/project     │
+│                    /api/login       /api/project     │
 │  (Axum + tokio)    /api/adr         /api/finding     │
 │                    /api/ledger      /api/dispatch    │
+│                    /api/agent-turn  /api/models/*    │
 │                    /api/events      404 JSON fallback│
 └──────┬────────────────────────────────┬──────────────┘
        │ Store                          │ Router

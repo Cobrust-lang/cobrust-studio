@@ -65,6 +65,7 @@ fn desktop_serve_args(project: PathBuf) -> ServeArgs {
         dev_model: std::env::var("COBRUST_DEV_MODEL")
             .unwrap_or_else(|_| "claude-opus-4-7".to_string()),
         debug_session: false,
+        enable_write_tools: std::env::var_os("COBRUST_ENABLE_WRITE_TOOLS").is_some(),
         dev_provider_kind: desktop_provider_kind(),
         persist_session: desktop_persist_backend(),
         persist_session_file: std::env::var_os("COBRUST_PERSIST_SESSION_FILE").map(PathBuf::from),

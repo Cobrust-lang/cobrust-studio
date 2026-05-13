@@ -17,6 +17,7 @@
 #![allow(clippy::missing_errors_doc)]
 
 pub mod adr;
+pub mod agent_turn;
 pub mod auth;
 pub mod dispatch;
 pub mod events;
@@ -24,6 +25,7 @@ pub mod finding;
 pub mod health;
 pub mod ledger;
 pub mod login;
+pub mod models;
 pub mod project;
 pub mod version;
 
@@ -33,5 +35,6 @@ pub use finding::{FindingDraftBody, FindingListResponse};
 pub use health::{HealthResponse, health};
 pub use ledger::{LEDGER_DEFAULT_N, LEDGER_MAX_N, LedgerRecentResponse};
 pub use login::{LoginRequest, LoginResponse, SessionStatusResponse};
+pub use models::ModelListResponse;
 pub use project::ProjectCurrentResponse;
 pub use version::{VersionResponse, version};
